@@ -19,7 +19,6 @@ use std::collections::{HashMap, HashSet};
 use std::thread;
 use crate::component::{ComponentBase, Class, InstanceBuilder, ComponentHandle, ComponentId, Component, Container, AddComponentError, ChildrenLogic, ChildrenLogicAddError, ClassHandle};
 use typed_html::dom::DOMTree;
-use std::thread::JoinHandle;
 use crate::tags::{Element, TagName};
 use htmldom_read::Node;
 
@@ -383,7 +382,7 @@ impl Interface {
 
     /// Inject styles to the view.
     pub fn inject_css(&mut self, css: &str) {
-        self.i.write().unwrap().view.inject_css(css);
+        self.i.write().unwrap().view.inject_css(css).unwrap();
     }
 }
 

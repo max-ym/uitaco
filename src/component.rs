@@ -4,12 +4,9 @@ use crate::{Interface};
 use std::sync::{Arc, RwLock};
 use std::fmt::Debug;
 use htmldom_read::{Node, NodeAccess, Attribute};
-use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRef, RwLockWriteGuardRefMut};
+use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use std::hash::{Hasher, Hash};
-use core::borrow::Borrow;
-use std::any::{Any, TypeId};
 use std::marker::PhantomData;
-use std::io::Read;
 use std::ops::Deref;
 
 /// This value must be stored in class attribute of tag which starts a component class.
