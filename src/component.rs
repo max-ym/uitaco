@@ -6,6 +6,11 @@ use std::fmt::Debug;
 use htmldom_read::{Node, NodeAccess, Attribute};
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRef, RwLockWriteGuardRefMut};
 use std::hash::{Hasher, Hash};
+use core::borrow::Borrow;
+use std::any::{Any, TypeId};
+use std::marker::PhantomData;
+use std::io::Read;
+use std::ops::Deref;
 
 /// This value must be stored in class attribute of tag which starts a component class.
 pub const COMPONENT_MARK: &'static str = "uitacoComponent";
@@ -98,6 +103,15 @@ pub trait Component: Element + Container + ChildrenLogic {
 
     /// All sub-components of this component.
     fn components(&self) -> &HashSet<ComponentHandle>;
+
+    /// Component class from which it was instantiated.
+    fn class(&self) -> &ClassHandle;
+
+    /// Check whether this component is of given class.
+    fn is_of_class(&self, class: &ClassHandle) -> bool {
+        let this = self.class();
+        Arc::ptr_eq(this, class)
+    }
 }
 
 /// Struct that points to a place of HTML string where ID can be inserted.
@@ -165,6 +179,12 @@ pub struct ComponentHandle {
     interface: Interface,
     id: usize,
     lock: Arc<RwLock<Box<dyn Component>>>,
+}
+
+/// Handle to a component with a particular type.
+pub struct ComponentHandleT<T: Component> {
+    handle: ComponentHandle,
+    _phantom: PhantomData<T>,
 }
 
 impl Placeholder {
@@ -528,6 +548,10 @@ impl Component for ComponentBase {
     fn components(&self) -> &HashSet<ComponentHandle> {
         &self.components
     }
+
+    fn class(&self) -> &ClassHandle {
+        &self.class
+    }
 }
 
 impl ComponentBase {
@@ -593,10 +617,44 @@ impl PartialEq for ComponentHandle {
 
 impl Eq for ComponentHandle {}
 
+impl<T> ComponentHandleT<T>
+    where T: Component
+{
+
+    /// Try creating new handle with type for given raw handle.
+    /// If given component by the handle is not of required type None is returned.
+    pub fn try_new(handle: &ComponentHandle) -> Option<Self> {
+        let lock = handle.read();
+        let component: &dyn Component = &*lock.as_owner().as_ref();
+
+        if component.is_of_class(lock.as_owner().class()) {
+            Some( ComponentHandleT {
+                handle: handle.clone(),
+                _phantom: Default::default(),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl<T> Deref for ComponentHandleT<T>
+    where T: Component {
+
+    type Target = Arc<RwLock<Box<T>>>;
+
+    fn deref(&self) -> &Self::Target {
+        let lock = &self.handle.lock;
+        let ptr = lock as *const Arc<RwLock<Box<dyn Component>>>;
+        let ptr = ptr as *const Self::Target;
+        unsafe { &*ptr }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use typed_html::dom::DOMTree;
-    use crate::component::{Class, InstanceBuilder};
+    use crate::component::{Class, InstanceBuilder, ComponentHandle};
     use crate::component::COMPONENT_MARK;
     use typed_html::types::Id;
 

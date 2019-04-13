@@ -17,7 +17,7 @@ use web_view::{WebView as _WebView, Content};
 use std::sync::{Arc, RwLock, mpsc};
 use std::collections::{HashMap, HashSet};
 use std::thread;
-use crate::component::{ComponentBase, Class, InstanceBuilder, ComponentHandle, ComponentId, Component, Container, AddComponentError, ChildrenLogic, ChildrenLogicAddError};
+use crate::component::{ComponentBase, Class, InstanceBuilder, ComponentHandle, ComponentId, Component, Container, AddComponentError, ChildrenLogic, ChildrenLogicAddError, ClassHandle};
 use typed_html::dom::DOMTree;
 use std::thread::JoinHandle;
 use crate::tags::{Element, TagName};
@@ -535,6 +535,10 @@ impl Component for RootComponent {
 
     fn components(&self) -> &HashSet<ComponentHandle> {
         self.base.components()
+    }
+
+    fn class(&self) -> &ClassHandle {
+        self.base.class()
     }
 }
 
