@@ -9,7 +9,7 @@ extern crate web_view;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
-extern crate htmldom_read;
+pub extern crate htmldom_read;
 extern crate owning_ref;
 
 use serde_derive::{Deserialize};
@@ -462,7 +462,6 @@ impl Container for RootComponent {
             -> Result<ComponentHandle, AddComponentError> {
         let html = component.generated_html();
         let id = self.name();
-        eprintln!("Name {:?}", id);
 
         let js = format!("\
             var i = document.getElementById('{}');

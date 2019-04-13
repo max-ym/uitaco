@@ -136,7 +136,7 @@ pub struct InstanceBuilder {
     placeholders: HashMap<String, Placeholder>,
 }
 
-/// Built component that is ready do be added to a page.
+/// Built component that is ready to be added to a page.
 #[derive(Debug)]
 pub struct ComponentBase {
     /// Interface to which this component was bound.
