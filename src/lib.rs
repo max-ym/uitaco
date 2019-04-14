@@ -329,9 +329,8 @@ impl Interface {
     /// Save request response. Remove request from waiting list and wake up the waiter.
     fn respond(&mut self, id: RequestId, val: ResponseValue) {
         let mut i = self.i.write().unwrap();
-        if let Some(r) = i.requests.get(&id) {
+        if let Some(r) = i.requests.remove(&id) {
             let _result = r.send(val);
-            i.requests.remove(&id);
         }
     }
 
