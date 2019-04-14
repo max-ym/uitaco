@@ -4,15 +4,24 @@ use htmldom_read::{Node};
 use crate::events::OnClick;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
+use std::fmt::Formatter;
 
 #[derive(Clone, Debug)]
 pub enum TagName {
     A,
+    Canvas,
     Img,
     P,
     Span,
 
     Unknown(String)
+}
+
+/// Supported canvas image formats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    Png,
+    Jpg,
 }
 
 /// Element in the HTML DOM that can be accessed by Rust interface.
@@ -122,6 +131,18 @@ pub trait TextContent: Element {
     }
 }
 
+pub trait ImageContent: Element {
+
+    /// Set image data to this element.
+    fn set_image(&mut self, img: Image);
+
+    /// Get image data of this element.
+    fn image(&self) -> Option<&Image>;
+
+    /// Remove any supplied image data.
+    fn remove_image(&mut self) -> Option<Image>;
+}
+
 macro_rules! elm_impl {
     ($name: ident) => {
         impl Element for $name {
@@ -148,6 +169,13 @@ pub struct Wrap<T: Element> {
     _p: PhantomData<T>,
 }
 
+/// Image data of canvas.
+#[derive(Clone)]
+pub struct Image {
+    base64: String,
+    format: ImageFormat,
+}
+
 #[derive(Debug)]
 pub struct A {
     interface: Interface,
@@ -156,10 +184,18 @@ pub struct A {
     onclick: OnClick<A>,
 }
 
+#[derive(Debug)]
+pub struct Canvas {
+    interface: Interface,
+    id: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct Img {
     interface: Interface,
     id: String,
+
+    data: Option<Image>,
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +211,7 @@ pub struct Span {
 }
 
 elm_impl!(A);
+elm_impl!(Canvas);
 elm_impl!(Img);
 elm_impl!(P);
 elm_impl!(Span);
@@ -220,6 +257,18 @@ impl<T> DerefMut for Wrap<T> where T: Element {
     }
 }
 
+impl Debug for Image {
+
+    fn fmt(&self, fmt: &mut Formatter) -> std::fmt::Result {
+        write!(fmt, "Image {{ base64: [char; ")?;
+        write!(fmt, "{}", self.base64.len())?;
+        write!(fmt, "], format: ")?;
+        write!(fmt, "{:?}", self.format)?;
+        write!(fmt, " }}")?;
+        Ok(())
+    }
+}
+
 impl From<&str> for TagName {
 
     fn from(s: &str) -> Self {
@@ -227,6 +276,7 @@ impl From<&str> for TagName {
 
         match s.to_lowercase().as_str() {
             "a"         => A,
+            "canvas"    => Canvas,
             "img"       => Img,
             "p"         => P,
             "span"      => Span,
@@ -252,7 +302,21 @@ impl TagName {
                 b
             },
 
-            TagName::Img        => Box::new(Img         { interface, id }),
+            TagName::Canvas => {
+                Box::new(Canvas {
+                    interface,
+                    id,
+                })
+            },
+
+            TagName::Img => Box::new(
+                Img {
+                    interface,
+                    id,
+                    data: None,
+                }
+            ),
+
             TagName::P          => Box::new(P           { interface, id }),
             TagName::Span       => Box::new(Span        { interface, id }),
 
@@ -296,6 +360,38 @@ impl TagName {
     }
 }
 
+impl ImageFormat {
+
+    pub fn to_string(&self) -> String {
+        use ImageFormat::*;
+        match self {
+            Jpg => "jpg",
+            Png => "png",
+        }.to_string()
+    }
+}
+
+impl Image {
+
+    /// Encode given array of bytes in Base64 encoding.
+    pub fn base64(bin: Vec<u8>) -> String {
+        base64::encode(&bin)
+    }
+
+    /// Generate image struct from given array.
+    pub fn from_base64(bin: Vec<u8>, format: ImageFormat) -> Image {
+        Image {
+            base64: Self::base64(bin),
+            format,
+        }
+    }
+
+    /// Convert this image to string that can be supplied to 'src' attribute of <img> tag.
+    pub fn to_img_string(&self) -> String {
+        format!("data:image/{};base64,{}", self.format.to_string(), self.base64)
+    }
+}
+
 impl A {
 
     pub fn href(&self) -> String {
@@ -316,6 +412,24 @@ impl A {
 
     pub fn onclick_mut(&mut self) -> &mut OnClick<A> {
         &mut self.onclick
+    }
+}
+
+impl ImageContent for Img {
+
+    fn set_image(&mut self, img: Image) {
+        self.data = Some(img);
+        self.set_attribute("src", &self.data.as_ref().unwrap().to_img_string());
+    }
+
+    fn image(&self) -> Option<&Image> {
+        self.data.as_ref()
+    }
+
+    fn remove_image(&mut self) -> Option<Image> {
+        let mut img: Option<Image> = None;
+        std::mem::swap(&mut img, &mut self.data);
+        img
     }
 }
 

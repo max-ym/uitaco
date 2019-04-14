@@ -8,6 +8,7 @@ use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use std::hash::{Hasher, Hash};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
+use rsgen::{OutputCharsType, gen_random_string};
 
 /// This value must be stored in class attribute of tag which starts a component class.
 pub const COMPONENT_MARK: &'static str = "uitacoComponent";
@@ -226,6 +227,30 @@ impl Placeholder {
     /// Initial ID of this placeholder.
     pub fn initial(&self) -> &String {
         &self.initial
+    }
+
+    /// Generate random name. Can be used when no exact name is necessary and it is enough that
+    /// this element just exists and is accessible by any name.
+    /// This is likely the way you would want to generate names.
+    pub fn generate_name(&mut self) -> &String {
+        let len = 15;
+        let prefix = "autogen";
+        let mut s = String::with_capacity(15);
+        s.push_str(prefix);
+        let len = len - prefix.len();
+
+        // Generate random string.
+        let oct = OutputCharsType::LatinAlphabetAndNumeric {
+            use_lower_case: true,
+            use_upper_case: true
+        };
+        let random = gen_random_string(len, oct);
+        s.push_str(&random);
+
+        // Save name.
+        self.set_name(s);
+
+        self.name().unwrap()
     }
 }
 

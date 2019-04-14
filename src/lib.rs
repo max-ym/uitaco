@@ -10,6 +10,8 @@ extern crate serde_derive;
 extern crate serde_json;
 pub extern crate htmldom_read;
 extern crate owning_ref;
+extern crate rsgen;
+extern crate base64;
 
 use serde_derive::{Deserialize};
 use web_view::{WebView as _WebView, Content};
