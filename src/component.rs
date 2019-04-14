@@ -7,7 +7,7 @@ use htmldom_read::{Node, NodeAccess, Attribute};
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use std::hash::{Hasher, Hash};
 use std::marker::PhantomData;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 /// This value must be stored in class attribute of tag which starts a component class.
 pub const COMPONENT_MARK: &'static str = "uitacoComponent";
@@ -638,6 +638,17 @@ impl<T> Deref for ComponentHandleT<T>
         let ptr = lock as *const Arc<RwLock<Box<dyn Component>>>;
         let ptr = ptr as *const Self::Target;
         unsafe { &*ptr }
+    }
+}
+
+impl<T> DerefMut for ComponentHandleT<T>
+    where T: Component {
+
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        let lock = &mut self.handle.lock;
+        let ptr = lock as *mut Arc<RwLock<Box<dyn Component>>>;
+        let ptr = ptr as *mut Self::Target;
+        unsafe { &mut *ptr }
     }
 }
 
