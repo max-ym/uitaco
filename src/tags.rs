@@ -1,8 +1,7 @@
-use crate::{Interface, ResponseValue, Callback};
+use crate::{Interface, ResponseValue};
 use std::fmt::Debug;
 use htmldom_read::{Node};
 use crate::events::OnClick;
-use std::any::{Any, TypeId};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 
@@ -49,7 +48,30 @@ pub trait Element: Debug {
     /// Get attribute value of the element if any. Even if attribute is present but is empty
     /// None is returned.
     fn attribute(&self, name: &str) -> Option<String> {
-        unimplemented!()
+        let request = self.interface().new_request();
+        let id = request.id();
+
+        let js = format!("\
+            var attr = document.getElementById('{}').getAttribute({});\
+            attr = attr == null ? '' : attr;\
+            window.external.invoke(JSON.stringify ({{\
+                incmd: 'attribute',\
+                request: {},\
+                value: attr\
+            }}));\
+        ", self.id(), name, id);
+
+        let receiver = request.run(js);
+        let attr = receiver.recv().unwrap();
+        if let ResponseValue::Str(s) = attr {
+            if s == "" {
+                None
+            } else {
+                Some(s)
+            }
+        } else {
+            unreachable!()
+        }
     }
 
     /// Set attribute with given name to given value.

@@ -6,7 +6,6 @@
 #[macro_use]
 extern crate typed_html;
 extern crate web_view;
-#[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
 pub extern crate htmldom_read;
@@ -309,7 +308,7 @@ impl Interface {
         self.i.write().unwrap().view.eval(js).unwrap();
     }
 
-    fn new_request(&mut self) -> RequestBuilder {
+    fn new_request(&self) -> RequestBuilder {
         let id = {
             let mut write = self.i.write().unwrap();
             let id = write.next_request_id;
@@ -437,6 +436,10 @@ impl RequestBuilder {
         let mut interface = self.interface;
         let js = self.js.unwrap();
         let id = self.id;
+
+        // Save the sender to the interface so callback could send the value to listener.
+        interface.i.write().unwrap().requests.insert(self.id, self.tx);
+
         thread::spawn(move || {
             let err = interface.i.write().unwrap().view.eval(&js).is_err();
             if err {
@@ -514,11 +517,11 @@ impl ChildrenLogic for RootComponent {
         Err(ChildrenLogicAddError::UnexpectedChild(child))
     }
 
-    fn remove_child(&mut self, child: &str) -> Option<Box<dyn Element>> {
+    fn remove_child(&mut self, _child: &str) -> Option<Box<dyn Element>> {
         None
     }
 
-    fn contains_child(&self, child: &str) -> bool {
+    fn contains_child(&self, _child: &str) -> bool {
         false
     }
 }
@@ -556,7 +559,7 @@ impl Component for RootComponent {
 
 /// Command that can be received from JavaScript front-end.
 #[derive(Deserialize, Clone, Debug)]
-#[serde(tag = "InCmd", rename_all = "camelCase")]
+#[serde(tag = "incmd", rename_all = "camelCase")]
 enum InCmd {
 
     /// Some event triggered callback. Passed arguments are stored in JSON format.
@@ -583,6 +586,5 @@ enum InCmd {
 /// Value received from JavaScript front-end.
 enum ResponseValue {
     Bool(bool),
-    Str(String),
-    Empty,
+    Str(String)
 }

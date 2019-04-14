@@ -1,4 +1,4 @@
-use crate::{Callback, CallbackId, Interface};
+use crate::{Callback, CallbackId};
 use crate::tags::Element;
 use std::ops::{Deref, DerefMut};
 
@@ -60,7 +60,7 @@ impl<E> Ref<E> where E: Element {
 fn default_callback_fn(id: CallbackId) -> String {
     format!("\
         window.external.invoke(JSON.stringify ({{\
-            InCmd: \"callback\",\
+            incmd: \"callback\",\
             descriptor: {},\
             args: \"\"\
         }}))\
