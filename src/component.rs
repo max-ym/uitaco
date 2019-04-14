@@ -58,7 +58,7 @@ pub trait ChildrenLogic {
         -> Result<(), ChildrenLogicAddError>;
 
     /// Try removing a child from this component. It can fail if child is not present.
-    fn remove_child(&mut self, child: &str) -> Option<()>;
+    fn remove_child(&mut self, child: &str) -> Option<Box<dyn Element>>;
 
     /// Check whether this component contains given child.
     fn contains_child(&self, child: &str) -> bool;
@@ -505,10 +505,10 @@ impl ChildrenLogic for ComponentBase {
         }
     }
 
-    fn remove_child(&mut self, child: &str) -> Option<()> {
+    fn remove_child(&mut self, child: &str) -> Option<Box<dyn Element>> {
         let option = self.elements.remove(child);
-        if let Some(_) = option {
-            Some(())
+        if let Some(e) = option {
+            Some(e)
         } else {
             None
         }
@@ -618,19 +618,12 @@ impl<T> ComponentHandleT<T>
     where T: Component
 {
 
-    /// Try creating new handle with type for given raw handle.
-    /// If given component by the handle is not of required type None is returned.
-    pub fn try_new(handle: &ComponentHandle) -> Option<Self> {
-        let lock = handle.read();
-        let component: &dyn Component = &*lock.as_owner().as_ref();
-
-        if component.is_of_class(lock.as_owner().class()) {
-            Some( ComponentHandleT {
-                handle: handle.clone(),
-                _phantom: Default::default(),
-            })
-        } else {
-            None
+    /// Create new handle with type for given raw handle. This is up to programmer
+    /// to ensure the type of passed component is correct.
+    pub unsafe fn new(handle: ComponentHandle) -> Self {
+        ComponentHandleT {
+            handle,
+            _phantom: Default::default()
         }
     }
 }

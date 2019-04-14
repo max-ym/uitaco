@@ -2,6 +2,9 @@ use crate::{Interface, ResponseValue, Callback};
 use std::fmt::Debug;
 use htmldom_read::{Node};
 use crate::events::OnClick;
+use std::any::{Any, TypeId};
+use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
 
 #[derive(Clone, Debug)]
 pub enum TagName {
@@ -116,6 +119,12 @@ macro_rules! elm_impl {
     }
 }
 
+/// Wrap that gives access to the dynamic element which is known to be of given type.
+pub struct Wrap<T: Element> {
+    element: Box<dyn Element>,
+    _p: PhantomData<T>,
+}
+
 #[derive(Debug)]
 pub struct A {
     interface: Interface,
@@ -152,6 +161,40 @@ pub struct Unknown {
     interface: Interface,
     id: String,
     name: String,
+}
+
+impl<T> Wrap<T> where T: Element {
+
+    /// Wrap given element.
+    ///
+    /// # Safety
+    /// Programmer must be sure this element has expected type.
+    pub unsafe fn new(element: Box<dyn Element>) -> Self {
+        Wrap {
+            element,
+            _p: Default::default(),
+        }
+    }
+}
+
+impl<T> Deref for Wrap<T> where T: Element {
+
+    type Target = Box<T>;
+
+    fn deref(&self) -> &Box<T> {
+        let b = &self.element;
+        let ptr = b as *const Box<dyn Element> as *const Box<T>;
+        unsafe { &*ptr }
+    }
+}
+
+impl<T> DerefMut for Wrap<T> where T: Element {
+
+    fn deref_mut(&mut self) -> &mut Box<T> {
+        let b = &mut self.element;
+        let ptr = b as *mut Box<dyn Element> as *mut Box<T>;
+        unsafe { &mut *ptr }
+    }
 }
 
 impl From<&str> for TagName {
@@ -242,6 +285,14 @@ impl A {
 
     pub fn set_href<T: AsRef<str>>(&mut self, href: T) {
         self.set_attribute("href", href.as_ref())
+    }
+
+    pub fn onclick(&self) -> &OnClick<A> {
+        &self.onclick
+    }
+
+    pub fn onclick_mut(&mut self) -> &mut OnClick<A> {
+        &mut self.onclick
     }
 }
 

@@ -503,7 +503,7 @@ impl ChildrenLogic for RootComponent {
         Err(ChildrenLogicAddError::UnexpectedChild(child))
     }
 
-    fn remove_child(&mut self, child: &str) -> Option<()> {
+    fn remove_child(&mut self, child: &str) -> Option<Box<dyn Element>> {
         None
     }
 
