@@ -56,7 +56,7 @@ pub trait Element: Debug {
     fn set_attribute(&mut self, name: &str, value: &str) {
         self.interface().eval(
             &format!(
-                "document.getElementById({}).{} = {}", self.id(), name, value
+                "document.getElementById('{}').setAttribute('{}', '{}');", self.id(), name, value
             )
         );
     }
@@ -120,6 +120,7 @@ macro_rules! elm_impl {
 }
 
 /// Wrap that gives access to the dynamic element which is known to be of given type.
+#[derive(Debug)]
 pub struct Wrap<T: Element> {
     element: Box<dyn Element>,
     _p: PhantomData<T>,
