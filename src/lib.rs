@@ -37,7 +37,7 @@ const ROOT_COMPONENT_ID: ComponentId = 0;
 
 type UserData = Vec<(String, String)>;
 type WebView<'a> = _WebView<'a, UserData>;
-type Callback = Fn(&Interface, String) + Send + Sync;
+type Callback = Fn(&Interface, String);
 type RequestId = usize;
 type CallbackId = usize;
 
@@ -56,7 +56,7 @@ struct InterfaceInner {
     view: WebView<'static>,
 
     next_callback_id: CallbackId,
-    callbacks: HashMap<CallbackId, &'static (dyn Fn(&Interface, String) + Send + Sync)>,
+    callbacks: HashMap<CallbackId, &'static dyn Fn(&Interface, String)>,
 
     next_request_id: RequestId,
     requests: HashMap<RequestId, mpsc::Sender<ResponseValue>>,
@@ -346,7 +346,18 @@ impl Interface {
     pub fn run(&self) {
         let interface = self.clone();
         loop {
-            match interface.i.write().unwrap().view.step() {
+            // TODO safer code.
+            let result = {
+                // Use ptr to drop the write lock as it otherwise interferes with locks
+                // created in callbacks.
+                let ptr = {
+                    let view = &mut interface.i.write().unwrap().view;
+                    view as *mut WebView
+                };
+                let wv = unsafe { &mut *ptr };
+                wv.step()
+            };
+            match result {
                 Some(Ok(_)) => (),
                 Some(_) => break,
                 None => break,
@@ -545,7 +556,7 @@ impl Component for RootComponent {
 
 /// Command that can be received from JavaScript front-end.
 #[derive(Deserialize, Clone, Debug)]
-#[serde(tag = "incmd", rename_all = "camelCase")]
+#[serde(tag = "InCmd", rename_all = "camelCase")]
 enum InCmd {
 
     /// Some event triggered callback. Passed arguments are stored in JSON format.
