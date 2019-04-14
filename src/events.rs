@@ -58,11 +58,12 @@ impl<E> Ref<E> where E: Element {
 }
 
 fn default_callback_fn(id: CallbackId) -> String {
-    format!("
-        window.external.invoke(JSON.stringify ({{
-            descriptor: {},
-            args: ''
-        }}))
+    format!("\
+        window.external.invoke(JSON.stringify ({{\
+            InCmd: \"callback\",\
+            descriptor: {},\
+            args: \"\"\
+        }}))\
     ", id)
 }
 
