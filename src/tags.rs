@@ -1,6 +1,7 @@
-use crate::{Interface, ResponseValue};
+use crate::{Interface, ResponseValue, Callback};
 use std::fmt::Debug;
 use htmldom_read::{Node};
+use crate::events::OnClick;
 
 #[derive(Clone, Debug)]
 pub enum TagName {
@@ -98,12 +99,6 @@ pub trait TextContent: Element {
 
 macro_rules! elm_impl {
     ($name: ident) => {
-        #[derive(Clone, Debug)]
-        pub struct $name {
-           interface: Interface,
-           id: String,
-        }
-
         impl Element for $name {
 
             fn interface(&self) -> &Interface {
@@ -119,6 +114,32 @@ macro_rules! elm_impl {
             }
         }
     }
+}
+
+#[derive(Debug)]
+pub struct A {
+    interface: Interface,
+    id: String,
+
+    onclick: OnClick<A>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Img {
+    interface: Interface,
+    id: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct P {
+    interface: Interface,
+    id: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct Span {
+    interface: Interface,
+    id: String,
 }
 
 elm_impl!(A);
@@ -154,7 +175,17 @@ impl TagName {
     /// Create implementation of the tag by it's tag name.
     pub fn new_impl(&self, interface: Interface, id: String) -> Box<dyn Element> {
         match self {
-            TagName::A          => Box::new(A           { interface, id }),
+            TagName::A => {
+                let mut b = Box::new(A {
+                    interface,
+                    id,
+                    onclick: unsafe { OnClick::null() },
+                });
+                let onclick = unsafe { OnClick::new(&mut *b) };
+                b.onclick = onclick;
+                b
+            },
+
             TagName::Img        => Box::new(Img         { interface, id }),
             TagName::P          => Box::new(P           { interface, id }),
             TagName::Span       => Box::new(Span        { interface, id }),
