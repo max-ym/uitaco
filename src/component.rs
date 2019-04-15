@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, LinkedList};
 use crate::tags::{Element, TagName};
 use crate::{Interface};
 use std::sync::{Arc, RwLock};
 use std::fmt::Debug;
-use htmldom_read::{Node, NodeAccess, Attribute};
+use htmldom_read::{Node, NodeAccess, Attribute, Children};
 use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use std::hash::{Hasher, Hash};
 use std::marker::PhantomData;
@@ -12,6 +12,10 @@ use rsgen::{OutputCharsType, gen_random_string};
 
 /// This value must be stored in class attribute of tag which starts a component class.
 pub const COMPONENT_MARK: &'static str = "uitacoComponent";
+
+/// Skip this element and it's children when parsing file for components.
+/// his also removes it's HTML code from all nodes of loaded classes.
+pub const SKIP_ELEMENT_MARK: &'static str = "uitacoSkip";
 
 pub type ClassHandle = Arc<Class>;
 pub type ComponentId = usize;
@@ -266,9 +270,79 @@ impl Class {
             return None;
         }
 
-        // Wrap node into root.
-        let node = NodeAccess::wrap_to_root(node.into()).unwrap();
-        let node = node.to_sharable();
+        // Remove the nodes which want to be skipped.
+        let node = {
+            // Wrap node into root.
+            let node = NodeAccess::wrap_to_root(node.into()).unwrap();
+
+            // Function to check whether this children list has nodes to skip.
+            fn has_skips(children: &Children) -> bool {
+                for child in children.iter() {
+                    // Check child.
+                    let attr = child.attribute_by_name("class");
+                    let skip = if let Some(attr) = attr {
+                        attr.values().contains(&SKIP_ELEMENT_MARK.to_string())
+                    } else {
+                        false
+                    };
+
+                    if skip {
+                        return true;
+                    }
+
+                    // Check children of a child.
+                    let skip = has_skips(child.children());
+                    if skip {
+                        return true;
+                    }
+                }
+                false
+            }
+
+            // Check whether some nodes must be skipped.
+            let needs_skips = has_skips(node.children());
+
+            // Edit nodes if needed and get sharable node tree.
+            if needs_skips {
+                // Owned access is required to edit the node's content.
+                let mut node = node.to_owned();
+
+                // Remove children that need to be skipped.
+                fn clean(children: &mut Children) {
+                    let mut skiplist = LinkedList::new();
+                    let mut i = 0;
+                    while i < children.len() {
+                        let child = children.get(i).unwrap();
+
+                        if let Some(attr) = child.attribute_by_name("class") {
+                            let skip
+                                = attr.values().contains(&SKIP_ELEMENT_MARK.to_string());
+                            if skip {
+                                skiplist.push_back(i);
+                            }
+                        }
+
+                        i += 1;
+                    }
+
+                    // Remove children that were marked for removal.
+                    let mut iter = skiplist.iter();
+                    while let Some(i) = iter.next_back() {
+                        children.remove(*i);
+                    }
+
+                    // Iterate through all children left to find any removal marks in them.
+                    for child in children.iter_mut() {
+                        clean(child.try_mut().unwrap().children_mut());
+                    }
+                }
+                clean(node.children_mut());
+
+                NodeAccess::Owned(node).to_sharable()
+            } else {
+                node.to_sharable()
+            }
+        };
 
         // Node must contain component mark and class name.
         let name = {
@@ -680,8 +754,8 @@ impl<T> DerefMut for ComponentHandleT<T>
 #[cfg(test)]
 mod tests {
     use typed_html::dom::DOMTree;
-    use crate::component::{Class, InstanceBuilder, ComponentHandle};
-    use crate::component::COMPONENT_MARK;
+    use crate::component::{Class};
+    use crate::component::{COMPONENT_MARK, SKIP_ELEMENT_MARK};
     use typed_html::types::Id;
 
     #[test]
@@ -724,5 +798,21 @@ mod tests {
         comp2.placeholders().get("comp2").unwrap();
         comp2.placeholders().get("pl").unwrap();
         assert!(comp2.placeholders().get("comp1").is_none());
+    }
+
+    #[test]
+    fn class_from_html_skip() {
+        let html = {
+            let dom: DOMTree<String> = html!(
+                <div class=COMPONENT_MARK id="some">
+                    <p class=SKIP_ELEMENT_MARK id="other">"Some text"</p>
+                </div>
+            );
+            dom.to_string()
+        };
+
+        let map = Class::all_from_html(&html);
+        assert!(map.contains_key("some"));
+        assert!(!map.contains_key("other"));
     }
 }

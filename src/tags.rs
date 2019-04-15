@@ -59,6 +59,8 @@ pub mod image_loader {
 pub enum TagName {
     A,
     Canvas,
+    H4,
+    H5,
     Img,
     P,
     Span,
@@ -240,6 +242,18 @@ pub struct Canvas {
 }
 
 #[derive(Clone, Debug)]
+pub struct H4 {
+    interface: Interface,
+    id: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct H5 {
+    interface: Interface,
+    id: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct Img {
     interface: Interface,
     id: String,
@@ -261,6 +275,8 @@ pub struct Span {
 
 elm_impl!(A);
 elm_impl!(Canvas);
+elm_impl!(H4);
+elm_impl!(H5);
 elm_impl!(Img);
 elm_impl!(P);
 elm_impl!(Span);
@@ -326,6 +342,8 @@ impl From<&str> for TagName {
         match s.to_lowercase().as_str() {
             "a"         => A,
             "canvas"    => Canvas,
+            "h4"        => H4,
+            "h5"        => H5,
             "img"       => Img,
             "p"         => P,
             "span"      => Span,
@@ -357,6 +375,20 @@ impl TagName {
                     id,
                 })
             },
+
+            TagName::H4 => Box::new(
+                H4 {
+                    interface,
+                    id,
+                }
+            ),
+
+            TagName::H5 => Box::new(
+                H4 {
+                    interface,
+                    id,
+                }
+            ),
 
             TagName::Img => Box::new(
                 Img {
@@ -483,6 +515,10 @@ impl ImageContent for Img {
 }
 
 impl TextContent for A {}
+
+impl TextContent for H4 {}
+
+impl TextContent for H5 {}
 
 impl TextContent for P {}
 
