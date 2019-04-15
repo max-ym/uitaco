@@ -5,6 +5,55 @@ use crate::events::OnClick;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::fmt::Formatter;
+use std::sync::Arc;
+
+/// The functions that allow to load images concurrently.
+pub mod image_loader {
+    use std::sync::Arc;
+    use crate::tags::Image;
+    use crate::tags::ImageFormat;
+    use std::collections::LinkedList;
+
+    /// Load all images from binary format from the iterator. This function is concurrent.
+    /// It will create multiple threads to process images in parallel. Returned value contains
+    /// handles to all images in the order they appeared in the iterator.
+    pub fn load_all(iter: &mut Iterator<Item = (Vec<u8>, ImageFormat)>) -> Vec<Arc<Image>> {
+        use std::sync::mpsc;
+        use std::thread;
+
+        // Start loading images async.
+        let recvs = {
+            let mut list = LinkedList::new();
+            for (arr, format) in iter {
+                let (tx, rx) = mpsc::channel();
+                list.push_back(rx);
+
+                thread::spawn(move || {
+                    let img = Image::from_binary(arr, format);
+                    tx.send(img).unwrap();
+                });
+            }
+            list
+        };
+
+        // Collect results.
+        let mut vec = Vec::with_capacity(recvs.len());
+        for rx in recvs {
+            let image = rx.recv().unwrap();
+            let arc = Arc::new(image);
+
+            vec.push(arc);
+        }
+
+        vec
+    }
+
+    /// Load one image into Arc.
+    pub fn load(bin: Vec<u8>, format: ImageFormat) -> Arc<Image> {
+        let img = Image::from_binary(bin, format);
+        Arc::new(img)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum TagName {
@@ -134,13 +183,13 @@ pub trait TextContent: Element {
 pub trait ImageContent: Element {
 
     /// Set image data to this element.
-    fn set_image(&mut self, img: Image);
+    fn set_image(&mut self, img: Arc<Image>);
 
     /// Get image data of this element.
-    fn image(&self) -> Option<&Image>;
+    fn image(&self) -> Option<&Arc<Image>>;
 
     /// Remove any supplied image data.
-    fn remove_image(&mut self) -> Option<Image>;
+    fn remove_image(&mut self) -> Option<Arc<Image>>;
 }
 
 macro_rules! elm_impl {
@@ -195,7 +244,7 @@ pub struct Img {
     interface: Interface,
     id: String,
 
-    data: Option<Image>,
+    data: Option<Arc<Image>>,
 }
 
 #[derive(Clone, Debug)]
@@ -379,7 +428,7 @@ impl Image {
     }
 
     /// Generate image struct from given array.
-    pub fn from_base64(bin: Vec<u8>, format: ImageFormat) -> Image {
+    pub fn from_binary(bin: Vec<u8>, format: ImageFormat) -> Image {
         Image {
             base64: Self::base64(bin),
             format,
@@ -417,17 +466,17 @@ impl A {
 
 impl ImageContent for Img {
 
-    fn set_image(&mut self, img: Image) {
+    fn set_image(&mut self, img: Arc<Image>) {
         self.data = Some(img);
         self.set_attribute("src", &self.data.as_ref().unwrap().to_img_string());
     }
 
-    fn image(&self) -> Option<&Image> {
+    fn image(&self) -> Option<&Arc<Image>> {
         self.data.as_ref()
     }
 
-    fn remove_image(&mut self) -> Option<Image> {
-        let mut img: Option<Image> = None;
+    fn remove_image(&mut self) -> Option<Arc<Image>> {
+        let mut img: Option<Arc<Image>> = None;
         std::mem::swap(&mut img, &mut self.data);
         img
     }
