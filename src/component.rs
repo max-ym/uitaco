@@ -116,6 +116,42 @@ pub trait Component: Element + Container + ChildrenLogic {
     }
 }
 
+/// Perform more advanced component initialization.
+/// Typical component initialization stages were divided into functions that are run in
+/// particular order after newly created component reaches required state.
+pub trait Initialize {
+
+    /// The first stage of initialization.
+    ///
+    /// Assign placeholders unique IDs so that later it was possible to use them as elements.
+    fn initialize_placeholders(&mut self);
+
+    /// The second stage of initialization.
+    ///
+    /// Create a base component from a builder. Load it to the interface and wrap the raw base into
+    /// specific component structure.
+    fn initialize_base(&mut self);
+
+    /// The third stage of initialization.
+    ///
+    /// Load all the elements and wrap them to make
+    /// easily accessible and allow to modify state of component parts.
+    fn initialize_elements(&mut self);
+
+    /// The fourth stage of initialization.
+    ///
+    /// Load all sub-components and initialize them.
+    fn initialize_components(&mut self);
+
+    /// Perform all initialization stages.
+    fn initialize(&mut self) {
+        self.initialize_placeholders();
+        self.initialize_base();
+        self.initialize_elements();
+        self.initialize_components();
+    }
+}
+
 /// Struct that points to a place of HTML string where ID can be inserted.
 /// It is created for elements that initially have IDs in a component code.
 #[derive(Clone, Debug)]
