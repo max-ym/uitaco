@@ -84,17 +84,23 @@ pub trait Element: Debug {
     /// HTML content of this element if it still exists.
     fn dom_html(&mut self) -> Option<String> {
         let req = self.interface_mut().new_request();
-        let js = format!(r#"
-            var inner = document.getElementById({}).outerHTML;
-            window.external.invoke(JSON.stringify({{
-                request: {},
-                value: inner
+        let js = format!("\
+            var inner = document.getElementById({}).outerHTML;\
+            window.external.invoke(JSON.stringify({{\
+                incmd: 'attribute',
+                request: {},\
+                value: inner\
             }}));
-        "#, self.id(), req.id());
+        ", self.id(), req.id());
         let rx = req.run(js);
-        let response = rx.recv().unwrap();
+        let response = rx.recv();
+        if let Err(_) = response {
+            return None; // likely because Null element was accessed.
+        }
+        let response = response.unwrap();
+
         if let ResponseValue::Str(s) = response {
-            if s.is_empty() { // TODO possible output is 'undefined'. Check the case.
+            if s.is_empty() {
                 None
             } else {
                 Some(s)
