@@ -121,6 +121,8 @@ pub trait Component: Element + Container + ChildrenLogic {
 /// particular order after newly created component reaches required state.
 pub trait Initialize {
 
+    type Target: Component;
+
     /// The first stage of initialization.
     ///
     /// Assign placeholders unique IDs so that later it was possible to use them as elements.
@@ -143,12 +145,17 @@ pub trait Initialize {
     /// Load all sub-components and initialize them.
     fn initialize_components(&mut self);
 
+    /// Final stage of initialization. Perform any finishing tasks and build the component.
+    fn initialize_final(self) -> ComponentHandleT<Self::Target>;
+
     /// Perform all initialization stages.
-    fn initialize(&mut self) {
+    fn initialize(mut self) -> ComponentHandleT<Self::Target>
+            where Self: std::marker::Sized {
         self.initialize_placeholders();
         self.initialize_base();
         self.initialize_elements();
         self.initialize_components();
+        self.initialize_final()
     }
 }
 
@@ -383,7 +390,11 @@ impl Class {
         // Node must contain component mark and class name.
         let name = {
             // Get node that contains component tag.
-            let node = node.children().iter().next().unwrap();
+            let node = node.children().iter().next();
+            if node.is_none() {
+                return None;
+            }
+            let node = node.unwrap();
 
             let class_attr = node.attribute_by_name("class");
             if let Some(class_attr) = class_attr {
@@ -478,8 +489,11 @@ impl Class {
         let mut map = HashMap::new();
         for node in component_nodes {
             let node = node.to_sharable();
-            let class = Class::try_one_from_node(node).unwrap();
-            map.insert(class.name.clone(), class);
+            let class = Class::try_one_from_node(node);
+            // Some classes might be skipped if they are marked so.
+            if let Some(class) = class {
+                map.insert(class.name.clone(), class);
+            }
         }
         map
     }
