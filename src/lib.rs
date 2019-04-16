@@ -17,7 +17,6 @@ use serde_derive::{Deserialize};
 use web_view::{WebView as _WebView, Content};
 use std::sync::{Arc, RwLock, mpsc};
 use std::collections::{HashMap, HashSet};
-use std::thread;
 use crate::component::{ComponentBase, Class, InstanceBuilder, ComponentHandle, ComponentId, Component, Container, AddComponentError, ChildrenLogic, ChildrenLogicAddError, ClassHandle};
 use typed_html::dom::DOMTree;
 use crate::tags::{Element, TagName};
@@ -438,16 +437,23 @@ impl RequestBuilder {
         let js = self.js.unwrap();
         let id = self.id;
 
-        // Save the sender to the interface so callback could send the value to listener.
-        interface.i.write().unwrap().requests.insert(self.id, self.tx);
+        let err = {
+            // Save the sender to the interface so callback could send the value to listener.
+            let view = {
+                let mut i = interface.i.write().unwrap();
+                i.requests.insert(self.id, self.tx);
 
-        thread::spawn(move || {
-            let err = interface.i.write().unwrap().view.eval(&js).is_err();
-            if err {
-                // Evaluation failed so response will never arrive. Delete the entry.
-                interface.remove_request(id);
-            }
-        });
+                // Drop the lock so handler in this thread would be allowed to lock it again.
+                let view = &mut i.view as *mut WebView;
+                unsafe { &mut *view } // TODO safe code
+            };
+            view.eval(&js).is_err()
+        };
+        if err {
+            // Evaluation failed so response will never arrive. Delete the entry.
+            interface.remove_request(id);
+        }
+
         self.rx
     }
 
