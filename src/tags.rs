@@ -170,6 +170,53 @@ pub trait Element: Debug {
     fn exists(&mut self) -> bool {
         self.dom_html().is_some()
     }
+
+    fn add_class(&mut self, class: &str) {
+        let attr = self.attribute("class");
+        let mut attr = if let Some(s) = attr {
+            s
+        }  else {
+            String::with_capacity(class.len())
+        };
+
+        attr.push_str(class);
+        self.set_attribute("class", &attr);
+    }
+
+    fn remove_class(&mut self, class: &str) {
+        let attr = self.attribute("class");
+        if attr.is_none() {
+            self.set_attribute("class", class);
+            return;
+        }
+        let attr = attr.unwrap();
+        let split = attr.split_whitespace();
+
+        let mut new_str = String::with_capacity(attr.len());
+        for val in split {
+            if val != class {
+                new_str.push_str(val);
+            }
+        }
+
+        self.set_attribute("class", &new_str);
+    }
+
+    fn has_class(&self, class: &str) -> bool {
+        let attr = self.attribute("class");
+        if attr.is_none() {
+            return false;
+        }
+        let attr = attr.unwrap();
+
+        let split = attr.split_whitespace();
+        for s in split {
+            if s == class {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 /// Text content can be set to some text value and read this content back.
