@@ -62,6 +62,7 @@ pub enum TagName {
     H4,
     H5,
     Img,
+    Li,
     P,
     Span,
 
@@ -268,6 +269,12 @@ pub struct Img {
 }
 
 #[derive(Clone, Debug)]
+pub struct Li {
+    interface: Interface,
+    id: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct P {
     interface: Interface,
     id: String,
@@ -284,6 +291,7 @@ elm_impl!(Canvas);
 elm_impl!(H4);
 elm_impl!(H5);
 elm_impl!(Img);
+elm_impl!(Li);
 elm_impl!(P);
 elm_impl!(Span);
 
@@ -351,6 +359,7 @@ impl From<&str> for TagName {
             "h4"        => H4,
             "h5"        => H5,
             "img"       => Img,
+            "li"        => Li,
             "p"         => P,
             "span"      => Span,
 
@@ -401,6 +410,13 @@ impl TagName {
                     interface,
                     id,
                     data: None,
+                }
+            ),
+
+            TagName::Li => Box::new (
+                Li {
+                    interface,
+                    id,
                 }
             ),
 
@@ -525,6 +541,8 @@ impl TextContent for A {}
 impl TextContent for H4 {}
 
 impl TextContent for H5 {}
+
+impl TextContent for Li {}
 
 impl TextContent for P {}
 
