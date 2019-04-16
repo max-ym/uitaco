@@ -119,9 +119,9 @@ pub trait Element: Debug {
         let id = request.id();
 
         let js = format!("\
-            var attr = document.getElementById('{}').getAttribute({});\
+            var attr = document.getElementById('{}').getAttribute('{}');\
             attr = attr == null ? '' : attr;\
-            window.external.invoke(JSON.stringify ({{\
+            window.external.invoke(JSON.stringify({{\
                 incmd: 'attribute',\
                 request: {},\
                 value: attr\
@@ -179,6 +179,7 @@ pub trait Element: Debug {
             String::with_capacity(class.len())
         };
 
+        attr.push(' ');
         attr.push_str(class);
         self.set_attribute("class", &attr);
     }
