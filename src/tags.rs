@@ -151,6 +151,26 @@ pub trait Element: Debug {
         );
     }
 
+    /// Append given text to innerHTML field.
+    fn append_inner_html(&mut self, html: &str) {
+        self.interface().eval(
+            &format!(
+                "document.getElementById('{}').innerHTML += '{}';",
+                self.id(), crate::js_prefix_quotes(html)
+            )
+        );
+    }
+
+    /// Clears the outerHTML of the element to remove it from HTML completely.
+    fn remove_from_html(&mut self) {
+        self.interface().eval(
+            &format!(
+                "document.getElementById('{}').outerHTML = '';",
+                self.id()
+            )
+        );
+    }
+
     /// Element ID.
     fn id(&self) -> &String;
 
