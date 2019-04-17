@@ -130,20 +130,21 @@ pub trait Initialize {
 
     /// The second stage of initialization.
     ///
-    /// Create a base component from a builder. Load it to the interface and wrap the raw base into
-    /// specific component structure.
-    fn initialize_base(&mut self);
+    /// Load all the elements and wrap them to make
+    /// easily accessible and allow to modify state of component parts.
+    fn initialize_children(&mut self);
 
     /// The third stage of initialization.
     ///
-    /// Load all the elements and wrap them to make
-    /// easily accessible and allow to modify state of component parts.
-    fn initialize_elements(&mut self);
+    /// Load all sub-components and initialize them.
+    fn initialize_container(&mut self);
 
     /// The fourth stage of initialization.
     ///
-    /// Load all sub-components and initialize them.
-    fn initialize_components(&mut self);
+    /// Create a base component and specific component.
+    /// Load it to the interface and wrap the raw base into specific component structure.
+    /// Make any required setups and assign children and sub-components.
+    fn initialize_base(&mut self);
 
     /// Final stage of initialization. Perform any finishing tasks and build the component.
     fn initialize_final(self) -> ComponentHandleT<Self::Target>;
@@ -152,9 +153,9 @@ pub trait Initialize {
     fn initialize(mut self) -> ComponentHandleT<Self::Target>
             where Self: std::marker::Sized {
         self.initialize_placeholders();
+        self.initialize_children();
+        self.initialize_container();
         self.initialize_base();
-        self.initialize_elements();
-        self.initialize_components();
         self.initialize_final()
     }
 }
