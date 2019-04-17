@@ -300,6 +300,11 @@ impl Placeholder {
 
         self.name().unwrap()
     }
+
+    /// Set the placeholder name to be the same as initial.
+    pub fn use_initial_name(&mut self) {
+        self.new = Some(self.initial.clone())
+    }
 }
 
 impl Class {
