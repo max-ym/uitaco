@@ -86,7 +86,7 @@ pub trait Element: Debug {
     fn dom_html(&mut self) -> Option<String> {
         let req = self.interface_mut().new_request();
         let js = format!("\
-            var inner = document.getElementById({}).outerHTML;\
+            var inner = document.getElementById('{}').outerHTML;\
             window.external.invoke(JSON.stringify({{\
                 incmd: 'attribute',
                 request: {},\
@@ -145,7 +145,8 @@ pub trait Element: Debug {
     fn set_attribute(&mut self, name: &str, value: &str) {
         self.interface().eval(
             &format!(
-                "document.getElementById('{}').setAttribute('{}', '{}');", self.id(), name, value
+                "document.getElementById('{}').setAttribute('{}', '{}');",
+                self.id(), name, crate::js_prefix_quotes(value)
             )
         );
     }

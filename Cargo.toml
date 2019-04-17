@@ -14,3 +14,4 @@ htmldom_read = { path = "../htmldom_read" }
 owning_ref = "0.4.0"
 rsgen = "0.2.0"
 base64 = "0.10.1"
+uitaco-derive = { path = "../uitaco-derive" }
