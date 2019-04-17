@@ -280,7 +280,7 @@ impl Placeholder {
     /// Generate random name. Can be used when no exact name is necessary and it is enough that
     /// this element just exists and is accessible by any name.
     /// This is likely the way you would want to generate names.
-    pub fn generate_name(&mut self) -> &String {
+    pub fn use_generated_name(&mut self) -> &String {
         let len = 15;
         let prefix = "autogen";
         let mut s = String::with_capacity(15);
