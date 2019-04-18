@@ -228,6 +228,7 @@ pub struct ComponentHandle {
 }
 
 /// Handle to a component with a particular type.
+#[derive(Debug, Clone)]
 pub struct ComponentHandleT<T: Component> {
     handle: ComponentHandle,
     _phantom: PhantomData<T>,
