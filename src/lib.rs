@@ -250,8 +250,10 @@ impl View {
 
         // Create and add root component.
         let mut classes = Class::all_from_html(&content);
-        let body_component = classes.remove(uitaco_body_id).unwrap();
-        let body_component = body_component.into_builder().build(wrap.clone());
+        let body_class = classes.remove(uitaco_body_id).unwrap();
+        let mut body_builder = body_class.into_builder();
+        body_builder.element_by_id_mut(uitaco_body_id).unwrap().use_initial_name();
+        let body_component = body_builder.build(wrap.clone());
         let root_component = RootComponent { base: body_component };
         {
             let mut guard = wrap.inner.write().unwrap();
