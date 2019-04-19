@@ -519,6 +519,11 @@ impl Class {
     pub fn into_handle(self) -> ClassHandle {
         Arc::new(self)
     }
+
+    /// Make instance builder from this class.
+    pub fn into_builder(self) -> InstanceBuilder {
+        InstanceBuilder::new_for_class(self)
+    }
 }
 
 impl InstanceBuilder {
