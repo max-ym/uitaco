@@ -101,6 +101,7 @@ pub struct View {
 }
 
 /// Wrap over view handle to make access easier.
+#[derive(Clone, Debug)]
 pub struct ViewWrap {
     inner: ViewHandle,
 }
