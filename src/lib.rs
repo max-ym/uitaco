@@ -252,9 +252,10 @@ impl View {
         let mut classes = Class::all_from_html(&content);
         let body_component = classes.remove(uitaco_body_id).unwrap();
         let body_component = body_component.into_builder().build(wrap.clone());
+        let root_component = RootComponent { base: body_component };
         {
             let mut guard = wrap.inner.write().unwrap();
-            let data = RwLock::new(Box::new(body_component) as _);
+            let data = RwLock::new(Box::new(root_component) as _);
             guard.components.insert(ROOT_COMPONENT_ID, Arc::new(data));
             guard.next_component_id += 1;
         }
