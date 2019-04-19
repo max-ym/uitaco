@@ -20,7 +20,7 @@ use serde_derive::{Deserialize};
 use web_view::{Content, WVResult};
 use std::sync::{Arc, RwLock, mpsc, Weak};
 use std::collections::{HashMap, HashSet};
-use crate::component::{ComponentBase, ComponentHandle, ComponentId, Component, Container, AddComponentError, ChildrenLogic, ChildrenLogicAddError, ClassHandle};
+use crate::component::{ComponentBase, ComponentHandle, ComponentId, Component, Container, AddComponentError, ChildrenLogic, ChildrenLogicAddError, ClassHandle, Class};
 use typed_html::dom::DOMTree;
 use crate::tags::{Element, TagName};
 use htmldom_read::Node;
@@ -216,7 +216,7 @@ impl View {
             i.to_string()
         };
 
-        my_builder.content = Some(Content::Html(content));
+        my_builder.content = Some(Content::Html(content.clone()));
 
         let (tx, rx) = mpsc::channel();
         let view = View {
@@ -235,10 +235,22 @@ impl View {
             callbacks: Default::default(),
         };
 
+        // Create arcs for wrap and access from new webview thread.
         let arc = Arc::new(RwLock::new(view));
         let arc2 = arc.clone();
         let mut view = arc2.write().unwrap();
-        view.this = Some(Arc::downgrade(&arc));
+        view.this = Some(Arc::downgrade(&arc)); // Save self-pointer.
+        let wrap = ViewWrap { inner: arc.clone() };
+
+        // Create and add root component.
+        let mut classes = Class::all_from_html(&content);
+        let body_component = classes.remove(uitaco_body_id).unwrap();
+        let body_component = body_component.into_builder().build(wrap.clone());
+        {
+            let mut guard = wrap.inner.write().unwrap();
+            let data = RwLock::new(Box::new(body_component) as _);
+            guard.components.insert(ROOT_COMPONENT_ID, Arc::new(data));
+        }
 
         let arc2 = arc.clone();
 
@@ -276,7 +288,7 @@ impl View {
             }
         });
 
-        ViewWrap { inner: arc }
+        wrap
     }
 
     /// Get new handle on this view.
