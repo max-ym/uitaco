@@ -254,6 +254,7 @@ impl View {
             let mut guard = wrap.inner.write().unwrap();
             let data = RwLock::new(Box::new(body_component) as _);
             guard.components.insert(ROOT_COMPONENT_ID, Arc::new(data));
+            guard.next_component_id += 1;
         }
 
         let arc2 = arc.clone();
