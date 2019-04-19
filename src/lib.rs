@@ -64,7 +64,7 @@ const ROOT_COMPONENT_ID: ComponentId = 0;
 
 type UserData = Vec<(String, String)>;
 //type WebView<'a> = _WebView<'a, UserData>;
-type Callback = Fn(ViewHandle, String);
+type Callback = Fn(ViewWrap, String);
 type RequestId = usize;
 type CallbackId = usize;
 type ViewId = usize;
@@ -94,7 +94,7 @@ pub struct View {
     components: HashMap<ComponentId, Arc<RwLock<Box<dyn Component>>>>,
 
     next_callback_id: CallbackId,
-    callbacks: HashMap<CallbackId, &'static dyn Fn(ViewHandle, String)>,
+    callbacks: HashMap<CallbackId, &'static dyn Fn(ViewWrap, String)>,
 
     next_request_id: RequestId,
     requests: HashMap<RequestId, mpsc::Sender<ResponseValue>>,
@@ -121,7 +121,7 @@ pub struct ViewBuilder {
 
 #[derive(Debug)]
 struct RequestBuilder {
-    view: ViewHandle,
+    view: ViewWrap,
     id: RequestId,
     js: Option<String>,
     rx: mpsc::Receiver<ResponseValue>,
@@ -280,8 +280,8 @@ impl View {
     }
 
     /// Get new handle on this view.
-    pub fn handle(&self) -> ViewHandle {
-        self.this.as_ref().unwrap().upgrade().unwrap()
+    pub fn handle(&self) -> ViewWrap {
+        ViewWrap { inner: self.this.as_ref().unwrap().upgrade().unwrap() }
     }
 
     /// Get access to root component Arc.
@@ -417,6 +417,10 @@ impl View {
 
 impl ViewWrap {
 
+    pub fn inner(&self) -> &ViewHandle {
+        &self.inner
+    }
+
     pub fn new_builder() -> ViewBuilder {
         View::new_builder()
     }
@@ -426,7 +430,7 @@ impl ViewWrap {
     }
 
     /// Get new handle on this view.
-    pub fn handle(&self) -> ViewHandle {
+    pub fn handle(&self) -> ViewWrap {
         let view = self.inner.read().unwrap();
         view.handle()
     }
@@ -453,6 +457,32 @@ impl ViewWrap {
     pub fn eval(&mut self, js: String) {
         let mut view = self.inner.write().unwrap();
         view.eval(js)
+    }
+
+    /// Add new callback. Get descriptor of newly registered callback.
+    fn add_callback(&mut self, f: Box<&'static Callback>) -> CallbackId {
+        let mut view = self.inner.write().unwrap();
+        view.add_callback(f)
+    }
+
+    /// Remove previously registered callback.
+    ///
+    /// # Panics
+    /// This function will panic if callback is not present.
+    fn remove_callback<'a, 'b>(&'a mut self, id: CallbackId) -> &'b Callback {
+        let mut view = self.inner.write().unwrap();
+        view.remove_callback(id)
+    }
+
+    /// Find callback with given id.
+    fn callback<'a, 'b>(&'a self, id: CallbackId) -> Option<Box<&'b Callback>> {
+        let view = self.inner.read().unwrap();
+        view.callback(id)
+    }
+
+    fn new_request(&mut self) -> RequestBuilder {
+        let mut view = self.inner.write().unwrap();
+        view.new_request()
     }
 }
 
@@ -491,7 +521,7 @@ impl ViewBuilder {
 
 impl RequestBuilder {
 
-    fn new(view: ViewHandle, id: RequestId) -> Self {
+    fn new(view: ViewWrap, id: RequestId) -> Self {
         let (tx, rx) = mpsc::channel();
         RequestBuilder {
             view,
@@ -516,7 +546,7 @@ impl RequestBuilder {
     pub fn eval(self) -> mpsc::Receiver<ResponseValue> {
         let js = self.js.unwrap();
         let id = self.id;
-        let mut lock = self.view.write().unwrap();
+        let mut lock = self.view.inner().write().unwrap();
 
         let err = {
             // Save the sender to the view so callback could send the value to listener.
@@ -547,11 +577,11 @@ impl Element for RootComponent {
         self.base.id()
     }
 
-    fn view(&self) -> RwLockReadGuardRef<View> {
+    fn view(&self) -> &ViewWrap {
         self.base.view()
     }
 
-    fn view_mut(&mut self) -> RwLockWriteGuardRefMut<View> {
+    fn view_mut(&mut self) -> &mut ViewWrap {
         self.base.view_mut()
     }
 }

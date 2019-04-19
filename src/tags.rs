@@ -1,4 +1,4 @@
-use crate::{ResponseValue, ViewHandle, View, ViewGuard, ViewGuardMut};
+use crate::{ResponseValue, ViewWrap};
 use std::fmt::Debug;
 use htmldom_read::{Node};
 use crate::events::OnClick;
@@ -6,7 +6,6 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::fmt::Formatter;
 use std::sync::Arc;
-use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 
 /// The functions that allow to load images concurrently.
 pub mod image_loader {
@@ -187,9 +186,12 @@ pub trait Element: Debug {
         self.set_attribute("id", new_id)
     }
 
-    fn view(&self) -> ViewGuard;
+    fn view(&self) -> &ViewWrap;
 
-    fn view_mut(&mut self) -> ViewGuardMut;
+    fn view_mut(&mut self) -> &mut ViewWrap {
+        let p = self.view() as *const ViewWrap as *mut ViewWrap;
+        unsafe { &mut *p }
+    }
 
     /// Check whether this element still exists.
     /// Actions on non-existing elements have no effect.
@@ -279,12 +281,8 @@ macro_rules! elm_impl {
     ($name: ident) => {
         impl Element for $name {
 
-            fn view(&self) -> RwLockReadGuardRef<View> {
-                RwLockReadGuardRef::new(self.view.read().unwrap())
-            }
-
-            fn view_mut(&mut self) -> RwLockWriteGuardRefMut<View> {
-                RwLockWriteGuardRefMut::new(self.view.write().unwrap())
+            fn view(&self) -> &ViewWrap {
+                &self.view
             }
 
             fn id(&self) -> &String {
@@ -314,7 +312,7 @@ pub struct Image {
 
 #[derive(Debug)]
 pub struct A {
-    view: ViewHandle,
+    view: ViewWrap,
     id: String,
 
     onclick: OnClick<A>,
@@ -322,25 +320,25 @@ pub struct A {
 
 #[derive(Debug)]
 pub struct Canvas {
-    view: ViewHandle,
+    view: ViewWrap,
     id: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct H4 {
-    view: ViewHandle,
+    view: ViewWrap,
     id: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct H5 {
-    view: ViewHandle,
+    view: ViewWrap,
     id: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct Img {
-    view: ViewHandle,
+    view: ViewWrap,
     id: String,
 
     data: Option<Arc<Image>>,
@@ -348,19 +346,19 @@ pub struct Img {
 
 #[derive(Clone, Debug)]
 pub struct Li {
-    view: ViewHandle,
+    view: ViewWrap,
     id: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct P {
-    view: ViewHandle,
+    view: ViewWrap,
     id: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct Span {
-    view: ViewHandle,
+    view: ViewWrap,
     id: String,
 }
 
@@ -375,7 +373,7 @@ elm_impl!(Span);
 
 #[derive(Clone, Debug)]
 pub struct Unknown {
-    view: ViewHandle,
+    view: ViewWrap,
     id: String,
     name: String,
 }
@@ -449,7 +447,7 @@ impl From<&str> for TagName {
 impl TagName {
 
     /// Create implementation of the tag by it's tag name.
-    pub fn new_impl(&self, view: ViewHandle, id: String) -> Box<dyn Element> {
+    pub fn new_impl(&self, view: ViewWrap, id: String) -> Box<dyn Element> {
         match self {
             TagName::A => {
                 let mut b = Box::new(A {
@@ -526,7 +524,7 @@ impl TagName {
     /// Node must contain ID of the element. It also is required to contain opening tag
     /// which corresponds to element tag. If either of conditions is not met this function
     /// will return None.
-    pub fn try_impl_from_node(node: &Node, view: ViewHandle) -> Option<Box<dyn Element>> {
+    pub fn try_impl_from_node(node: &Node, view: ViewWrap) -> Option<Box<dyn Element>> {
         let tag_name = Self::try_from_node(node);
         if let Some(tag_name) = tag_name {
             let id = node.attribute_by_name("id");
@@ -636,11 +634,7 @@ impl Element for Unknown {
         &self.id
     }
 
-    fn view(&self) -> RwLockReadGuardRef<View> {
-        RwLockReadGuardRef::new(self.view.read().unwrap())
-    }
-
-    fn view_mut(&mut self) -> RwLockWriteGuardRefMut<View> {
-        RwLockWriteGuardRefMut::new(self.view.write().unwrap())
+    fn view(&self) -> &ViewWrap {
+        &self.view
     }
 }
