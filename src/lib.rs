@@ -285,7 +285,7 @@ impl View {
     }
 
     /// Get access to root component Arc.
-    pub fn root_component(&mut self) -> ComponentHandle {
+    pub fn root_component(&self) -> ComponentHandle {
         ComponentHandle::new(self.handle(), ROOT_COMPONENT_ID)
     }
 
@@ -436,8 +436,8 @@ impl ViewWrap {
     }
 
     /// Get access to root component Arc.
-    pub fn root_component(&mut self) -> ComponentHandle {
-        let mut view = self.inner.write().unwrap();
+    pub fn root_component(&self) -> ComponentHandle {
+        let view = self.inner.read().unwrap();
         view.root_component()
     }
 
