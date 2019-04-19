@@ -753,6 +753,20 @@ impl ComponentHandle {
         }
     }
 
+    /// Create new component handle for given component (by id) in the interface.
+    ///
+    /// # Safety
+    /// This function does not verify whether passed arc actually is pointing to this view's
+    /// component or whether the ID is correct.
+    pub unsafe fn new_unsafe(view: ViewWrap, id: ComponentId, lock: Arc<RwLock<Box<Component>>>)
+            -> Self {
+        ComponentHandle {
+            view,
+            id,
+            lock,
+        }
+    }
+
     pub fn id(&self) -> ComponentId {
         self.id
     }

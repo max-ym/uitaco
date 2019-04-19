@@ -238,8 +238,12 @@ impl View {
         // Create arcs for wrap and access from new webview thread.
         let arc = Arc::new(RwLock::new(view));
         let arc2 = arc.clone();
-        let mut view = arc2.write().unwrap();
-        view.this = Some(Arc::downgrade(&arc)); // Save self-pointer.
+
+        { // Save self-pointer.
+            let mut view = arc2.write().unwrap();
+            view.this = Some(Arc::downgrade(&arc));
+        }
+
         let wrap = ViewWrap { inner: arc.clone() };
 
         // Create and add root component.
@@ -303,15 +307,16 @@ impl View {
 
     /// Add new component to the interface and get a handle to it.
     fn add_component(&mut self, component: Box<dyn Component>) -> ComponentHandle {
-        let id = {
+        let (id, arc) = {
             let id = self.next_component_id;
             self.next_component_id += 1;
 
-            self.components.insert(id, Arc::new(RwLock::new(component)));
-            id
+            let arc = Arc::new(RwLock::new(component));
+            self.components.insert(id, arc.clone());
+            (id, arc)
         };
 
-        ComponentHandle::new(self.handle(), id)
+        unsafe { ComponentHandle::new_unsafe(self.handle(), id, arc) }
     }
 
     /// Try removing component from the interface. If it does not exist None is returned.
