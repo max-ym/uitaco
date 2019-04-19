@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, LinkedList};
 use crate::tags::{Element, TagName};
-use crate::{Interface};
+use crate::{ViewHandle, View};
 use std::sync::{Arc, RwLock};
 use std::fmt::Debug;
 use htmldom_read::{Node, NodeAccess, Attribute, Children};
@@ -200,7 +200,7 @@ pub struct InstanceBuilder {
 #[derive(Debug)]
 pub struct ComponentBase {
     /// Interface to which this component was bound.
-    interface: Interface,
+    view: ViewHandle,
 
     /// Class from which component was instantiated.
     class: ClassHandle,
@@ -222,7 +222,7 @@ pub struct ComponentBase {
 /// Handle to a component registered in the interface.
 #[derive(Clone, Debug)]
 pub struct ComponentHandle {
-    interface: Interface,
+    view: ViewHandle,
     id: usize,
     lock: Arc<RwLock<Box<dyn Component>>>,
 }
@@ -545,7 +545,7 @@ impl InstanceBuilder {
     }
 
     /// Build the component for given interface.
-    pub fn build(self, interface: Interface) -> ComponentBase {
+    pub fn build(self, view: ViewHandle) -> ComponentBase {
         let class = self.class;
 
         let mut html = {
@@ -583,7 +583,7 @@ impl InstanceBuilder {
 
                     // Register element.
                     let elem = TagName::try_impl_from_node(
-                        node, interface.clone()
+                        node, view.clone()
                     ).unwrap();
                     elements.insert(initial.to_owned(), elem);
                 } else {
@@ -594,7 +594,7 @@ impl InstanceBuilder {
         };
 
         ComponentBase {
-            interface,
+            view,
             class,
             html,
             elements,
@@ -613,8 +613,12 @@ impl Element for ComponentBase {
         &self.name()
     }
 
-    fn interface(&self) -> &Interface {
-        &self.interface
+    fn view(&self) -> RwLockReadGuardRef<View> {
+        RwLockReadGuardRef::new(self.view.read().unwrap())
+    }
+
+    fn view_mut(&mut self) -> RwLockWriteGuardRefMut<View> {
+        RwLockWriteGuardRefMut::new(self.view.write().unwrap())
     }
 }
 
@@ -625,7 +629,8 @@ impl Container for ComponentBase {
 
     fn add_component(&mut self, component: Box<dyn Component>)
             -> Result<ComponentHandle, AddComponentError> {
-        let handle = self.interface.add_component(component);
+        let mut view = self.view.write().unwrap();
+        let handle = view.add_component(component);
         self.components.insert(handle.clone());
         Ok(handle)
     }
@@ -633,7 +638,7 @@ impl Container for ComponentBase {
     fn remove_component(&mut self, component: &ComponentHandle) -> Option<()> {
         let found = self.components.remove(&component);
         if found {
-            self.interface.remove_component(component);
+            self.view.write().unwrap().remove_component(component);
             Some(())
         } else {
             None
@@ -728,14 +733,14 @@ impl ComponentBase {
 impl ComponentHandle {
 
     /// Create new component handle for given component (by id) in the interface.
-    pub fn new(interface: Interface, id: ComponentId) -> Self {
+    pub fn new(view: ViewHandle, id: ComponentId) -> Self {
         let lock
-            = interface.i.read().unwrap()
+            = view.read().unwrap()
             .components.get(&id).unwrap()
             .clone();
 
         ComponentHandle {
-            interface,
+            view,
             id,
             lock
         }

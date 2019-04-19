@@ -17,13 +17,16 @@ extern crate uitaco_derive;
 pub use uitaco_derive::*;
 
 use serde_derive::{Deserialize};
-use web_view::{WebView as _WebView, Content};
-use std::sync::{Arc, RwLock, mpsc};
+use web_view::{Content, WVResult};
+use std::sync::{Arc, RwLock, mpsc, Weak};
 use std::collections::{HashMap, HashSet};
-use crate::component::{ComponentBase, Class, InstanceBuilder, ComponentHandle, ComponentId, Component, Container, AddComponentError, ChildrenLogic, ChildrenLogicAddError, ClassHandle};
+use crate::component::{ComponentBase, ComponentHandle, ComponentId, Component, Container, AddComponentError, ChildrenLogic, ChildrenLogicAddError, ClassHandle};
 use typed_html::dom::DOMTree;
 use crate::tags::{Element, TagName};
 use htmldom_read::Node;
+use std::fmt::{Debug, Formatter};
+use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
+use std::thread;
 
 /// Components allow to build user interface using repeated patterns with binding to elements.
 /// This allows to speed up building of UI. Binding allows to easily access contents from Rust.
@@ -60,13 +63,48 @@ pub fn js_prefix_quotes(s: &str) -> String {
 const ROOT_COMPONENT_ID: ComponentId = 0;
 
 type UserData = Vec<(String, String)>;
-type WebView<'a> = _WebView<'a, UserData>;
-type Callback = Fn(&Interface, String);
+//type WebView<'a> = _WebView<'a, UserData>;
+type Callback = Fn(ViewHandle, String);
 type RequestId = usize;
 type CallbackId = usize;
+type ViewId = usize;
+type ViewHandle = Arc<RwLock<View>>;
+type ViewWeak = Weak<RwLock<View>>;
+
+/// Command that can be sent to View.
+enum ViewCmd {
+
+    /// Evaluate given JS code.
+    Eval(Option<mpsc::Sender<WVResult>>, String),
+    InjectCss(String),
+}
+
+/// Wrapped instance of WebView. Also is connected to thread that runs GUI on that instance.
+/// Is used to dispatch commands over GUI.
+pub struct View {
+    id: ViewId,
+    tx: mpsc::Sender<ViewCmd>,
+
+    // After initialization is always set to Some.
+    this: Option<ViewWeak>,
+
+    next_component_id: ComponentId,
+    components: HashMap<ComponentId, Arc<RwLock<Box<dyn Component>>>>,
+
+    next_callback_id: CallbackId,
+    callbacks: HashMap<CallbackId, &'static dyn Fn(ViewHandle, String)>,
+
+    next_request_id: RequestId,
+    requests: HashMap<RequestId, mpsc::Sender<ResponseValue>>,
+}
+
+unsafe impl Sync for View {}
+unsafe impl Send for View {}
 
 #[derive(Clone, Debug)]
-pub struct InterfaceBuilder {
+pub struct ViewBuilder {
+    interface: Interface,
+
     debug: bool,
     fullscreen: bool,
     resizable: bool,
@@ -76,17 +114,9 @@ pub struct InterfaceBuilder {
 }
 
 /// Interface for `WebView` and `Uitaco`.
+#[derive(Debug)]
 struct InterfaceInner {
-    view: WebView<'static>,
-
-    next_callback_id: CallbackId,
-    callbacks: HashMap<CallbackId, &'static dyn Fn(&Interface, String)>,
-
-    next_request_id: RequestId,
-    requests: HashMap<RequestId, mpsc::Sender<ResponseValue>>,
-
-    next_component_id: ComponentId,
-    components: HashMap<ComponentId, Arc<RwLock<Box<dyn Component>>>>,
+    views: HashMap<ViewId, ViewHandle>,
 }
 
 /// Handle to the Interface to allow to access it from different threads.
@@ -96,8 +126,9 @@ pub struct Interface {
     i: Arc<RwLock<InterfaceInner>>,
 }
 
+#[derive(Debug)]
 struct RequestBuilder {
-    interface: Interface,
+    view: ViewHandle,
     id: RequestId,
     js: Option<String>,
     rx: mpsc::Receiver<ResponseValue>,
@@ -109,39 +140,60 @@ pub struct RootComponent {
     base: ComponentBase,
 }
 
-impl std::fmt::Debug for InterfaceInner {
+impl Debug for View {
 
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt(&self, fmt: &mut Formatter) -> std::fmt::Result {
         #[derive(Debug)]
-        struct InterfaceInnerDebug<'a> {
-            view: &'a WebView<'static>,
-
-            next_callback_id: CallbackId,
-
-            next_request_id: RequestId,
-            requests: &'a HashMap<RequestId, mpsc::Sender<ResponseValue>>,
+        struct DebuggableView<'a> {
+            id: ViewId,
+            tx: &'a mpsc::Sender<ViewCmd>,
 
             next_component_id: ComponentId,
             components: &'a HashMap<ComponentId, Arc<RwLock<Box<dyn Component>>>>,
-        }
 
-        let for_debug = InterfaceInnerDebug {
-            view:               &self.view,
-            next_callback_id:   self.next_callback_id,
-            next_request_id:    self.next_request_id,
-            requests:           &self.requests,
-            next_component_id:  self.next_component_id,
-            components:         &self.components,
+            next_callback_id: CallbackId,
+            callbacks: HashSet<CallbackId>,
+
+            next_request_id: RequestId,
+            requests: &'a HashMap<RequestId, mpsc::Sender<ResponseValue>>,
         };
 
-        write!(f, "{:?}", for_debug)
+        let callbacks = {
+            let mut set
+                = HashSet::with_capacity(self.callbacks.len());
+
+            for (i, _) in &self.callbacks {
+                set.insert(*i);
+            }
+
+            set
+        };
+
+        let s = DebuggableView {
+            id: self.id,
+            tx: &self.tx,
+
+            next_component_id: self.next_component_id,
+            components: &self.components,
+
+            next_callback_id: self.next_callback_id,
+            callbacks,
+
+            next_request_id: self.next_request_id,
+            requests: &self.requests,
+        };
+
+        s.fmt(fmt)
     }
 }
 
-impl Default for InterfaceBuilder {
+impl View {
 
-    fn default() -> Self {
-        InterfaceBuilder {
+    /// Get new builder to help creating view.
+    pub fn new_builder(interface: Interface) -> ViewBuilder {
+        ViewBuilder {
+            interface,
+
             debug: true,
             fullscreen: false,
             resizable: true,
@@ -150,9 +202,229 @@ impl Default for InterfaceBuilder {
             title: None,
         }
     }
+
+    /// Create new view. This opens a WebView window.
+    pub fn new_from_builder(builder: ViewBuilder) -> ViewHandle {
+        let mut my_builder = web_view::builder();
+        my_builder.debug = builder.debug;
+        my_builder.resizable = builder.resizable;
+        my_builder.title = "Unnamed Uitaco";
+        my_builder.width = builder.width as _;
+        my_builder.height = builder.height as _;
+
+        let uitaco_body_id = "uitacoBody";
+
+        let content = {
+            let uitaco_body_id = typed_html::types::Id::new(uitaco_body_id);
+            let i: DOMTree<String> = html!(
+                <html>
+                <head><title /></head>
+                <body class=component::COMPONENT_MARK id=uitaco_body_id></body>
+                </html>
+            );
+            i.to_string()
+        };
+
+        my_builder.content = Some(Content::Html(content));
+
+        let (tx, rx) = mpsc::channel();
+        let view = View {
+            id: 0,
+            tx,
+
+            this: None,
+
+            next_component_id: 0,
+            components: Default::default(),
+
+            next_request_id: 0,
+            requests: Default::default(),
+
+            next_callback_id: 0,
+            callbacks: Default::default(),
+        };
+
+        let arc = Arc::new(RwLock::new(view));
+        let arc2 = arc.clone();
+        let mut view = arc2.write().unwrap();
+        view.this = Some(Arc::downgrade(&arc));
+
+        let arc2 = arc.clone();
+
+        // Thread where WebView will live.
+        thread::spawn(move || {
+            let mut webview = my_builder
+                .invoke_handler(move |_view, arg| {
+                    let mut view = arc2.write().unwrap();
+                    view.handler(arg)
+                })
+                .user_data(UserData::new())
+                .build().unwrap();
+
+            loop {
+                let result = rx.recv();
+                if let Err(_) = result {
+                    break; // TODO notify any who waits for this death.
+                }
+
+                use ViewCmd::*;
+                match result.unwrap() {
+                    Eval(ref sender, ref st) => {
+                        let result = webview.eval(st);
+                        if let Some(sender) = sender {
+                            sender.send(result).unwrap();
+                        }
+                    },
+                    InjectCss(ref st) => {
+                        let result = webview.inject_css(st);
+                        if let Err(_) = result {
+                            // Nothing.
+                        }
+                    }
+                }
+            }
+        });
+
+        arc
+    }
+
+    /// Get new handle on this view.
+    pub fn handle(&self) -> ViewHandle {
+        self.this.as_ref().unwrap().upgrade().unwrap()
+    }
+
+    /// Get access to root component Arc.
+    pub fn root_component(&mut self) -> ComponentHandle {
+        ComponentHandle::new(self.handle(), ROOT_COMPONENT_ID)
+    }
+
+    /// Add new component to the interface and get a handle to it.
+    fn add_component(&mut self, component: Box<dyn Component>) -> ComponentHandle {
+        let id = {
+            let id = self.next_component_id;
+            self.next_component_id += 1;
+
+            self.components.insert(id, Arc::new(RwLock::new(component)));
+            id
+        };
+
+        ComponentHandle::new(self.handle(), id)
+    }
+
+    /// Try removing component from the interface. If it does not exist None is returned.
+    /// Also, it may still be in use though it will still be removed from the interface
+    /// and all new changes to the component will be therefore ignored.
+    fn remove_component(&mut self, handle: &ComponentHandle) -> Option<()> {
+        let option = self.components.remove(&handle.id());
+        if let Some(_) = option {
+            Some(())
+        } else {
+            None
+        }
+    }
+
+    /// Inject styles to the view.
+    pub fn inject_css(&mut self, css: String) {
+        self.tx.send(ViewCmd::InjectCss(css)).unwrap();
+    }
+
+    /// Run given JS code and wait for result.
+    pub fn eval_wait(&mut self, js: String) -> WVResult {
+        let (tx, rx) = mpsc::channel();
+        self.tx.send(ViewCmd::Eval(Some(tx), js)).unwrap();
+        let recv = rx.recv().unwrap();
+        recv
+    }
+
+    /// Run given JS code without waiting for result.
+    pub fn eval(&mut self, js: String) {
+        self.tx.send(ViewCmd::Eval(None, js)).unwrap();
+    }
+
+    fn new_request(&mut self) -> RequestBuilder {
+        let id = {
+            let id = self.next_request_id;
+            self.next_request_id += 1;
+            id
+        };
+
+        RequestBuilder::new(self.handle(), id)
+    }
+
+    /// Add new callback. Get descriptor of newly registered callback.
+    fn add_callback(&mut self, f: Box<&'static Callback>) -> CallbackId {
+        let id = self.next_callback_id;
+        self.callbacks.insert(id, *f);
+        self.next_callback_id += 1;
+        id
+    }
+
+    /// Remove previously registered callback.
+    ///
+    /// # Panics
+    /// This function will panic if callback is not present.
+    fn remove_callback<'a, 'b>(&'a mut self, id: CallbackId) -> &'b Callback {
+        self.callbacks.remove(&id).unwrap()
+    }
+
+    /// Find callback with given id.
+    fn callback<'a, 'b>(&'a self, id: CallbackId) -> Option<Box<&'b Callback>> {
+        if let Some(f) = self.callbacks.get(&id) {
+            Some(Box::new(f.clone()))
+        } else {
+            None
+        }
+    }
+
+    /// Function that handles events from JavaScript.
+    fn handler(&mut self, arg: &str) -> web_view::WVResult {
+        use InCmd::*;
+
+        match serde_json::from_str(arg).unwrap() {
+            Callback {
+                descriptor,
+                args,
+            } => {
+                if let Some(f) = self.callback(descriptor) {
+                    let s = self.handle();
+                    f(s, args);
+                }
+            },
+
+            ExistenceTest {
+                request,
+                found,
+            } => {
+                self.respond(request, ResponseValue::Bool(found));
+            },
+
+            Attribute {
+                request,
+                value,
+            } => {
+                self.respond(request, ResponseValue::Str(value));
+            },
+        }
+
+        Ok(())
+    }
+
+    /// Remove previously registered request by id if any. Function returns a sender
+    /// that was to be used to wake up the waiting function.
+    fn remove_request(&mut self, id: RequestId) -> Option<mpsc::Sender<ResponseValue>> {
+        self.requests.remove(&id)
+    }
+
+    /// Save request response. Remove request from waiting list and wake up the waiter.
+    fn respond(&mut self, id: RequestId, val: ResponseValue) {
+        if let Some(r) = self.requests.remove(&id) {
+            let _result = r.send(val);
+            // TODO use result
+        }
+    }
 }
 
-impl InterfaceBuilder {
+impl ViewBuilder {
 
     pub fn debug(mut self, debug: bool) -> Self {
         self.debug = debug;
@@ -180,246 +452,13 @@ impl InterfaceBuilder {
         self
     }
 
-    pub fn build(self) -> Interface {
-        Interface::new_from_builder(self)
+    pub fn build(self) -> ViewHandle {
+        View::new_from_builder(self)
     }
 }
 
 impl Interface {
 
-    /// Create new builder to help building interface.
-    pub fn new_builder() -> InterfaceBuilder {
-         InterfaceBuilder::default()
-    }
-
-    /// Create new interface for WebView.
-    pub fn new_from_builder(builder: InterfaceBuilder) -> Interface {
-        let mut my_builder = web_view::builder();
-        my_builder.debug = builder.debug;
-        my_builder.resizable = builder.resizable;
-        my_builder.title = "Unnamed Uitaco";
-        my_builder.width = builder.width as _;
-        my_builder.height = builder.height as _;
-
-        // ID that will be assigned to element 'body' of the HTML document.
-        let uitaco_body_id = "uitacoBody";
-
-        let content = {
-            let uitaco_body_id = typed_html::types::Id::new(uitaco_body_id);
-            let i: DOMTree<String> = html!(
-                <html>
-                <head>
-                    <title>"WebView + Uitaco"</title>
-                </head>
-                <body class=component::COMPONENT_MARK id=uitaco_body_id></body>
-                </html>
-            );
-            i.to_string()
-        };
-
-        // Later used to initialize root component.
-        let mut classes = Class::all_from_html(&content);
-        let root_component_class = classes.remove(uitaco_body_id).unwrap();
-
-        my_builder.content = Some(Content::Html(content));
-
-        let inner = InterfaceInner {
-            view: unsafe { std::mem::uninitialized() },
-
-            next_callback_id: 0,
-            callbacks: HashMap::new(),
-
-            next_request_id: 0,
-            requests: HashMap::new(),
-
-            next_component_id: 0,
-            components: HashMap::new(),
-        };
-
-        let mut interface = Interface {
-            i: Arc::new(RwLock::new(inner)),
-        };
-
-        let mut iclone = interface.clone();
-        let mut view = my_builder
-            .invoke_handler(move |_view, arg| {
-                iclone.handler(arg)
-            })
-            .user_data(UserData::new())
-            .build().unwrap();
-
-        // Initialize view and forget uninitialized value.
-        {
-            use std::mem::{swap, forget};
-            swap(&mut interface.i.write().unwrap().view, &mut view);
-            forget(view);
-        }
-
-        // Initialize root component.
-        let root_component = {
-            let mut builder = InstanceBuilder::new_for_class(root_component_class);
-
-            builder.element_by_id_mut(uitaco_body_id).unwrap()
-                .set_name(uitaco_body_id.to_string());
-            let base = builder.build(interface.clone());
-
-            RootComponent { base }
-        };
-        interface.add_component(Box::new(root_component));
-
-        interface
-    }
-
-    /// Add new callback. Get descriptor of newly registered callback.
-    fn add_callback(&mut self, f: Box<&'static Callback>) -> CallbackId {
-        let mut interface = self.i.write().unwrap();
-        let id = interface.next_callback_id;
-        interface.callbacks.insert(id, *f);
-        interface.next_callback_id += 1;
-        id
-    }
-
-    /// Remove previously registered callback.
-    fn remove_callback(&mut self, id: CallbackId) -> &Callback {
-        let mut interface = self.i.write().unwrap();
-        interface.callbacks.remove(&id).unwrap()
-    }
-
-    /// Find callback with given id.
-    fn callback(&self, id: CallbackId) -> Option<Box<&Callback>> {
-        let interface = self.i.read().unwrap();
-        if let Some(f) = interface.callbacks.get(&id) {
-            Some(Box::new(f.clone()))
-        } else {
-            None
-        }
-    }
-
-    /// Function that handles events from JavaScript.
-    fn handler(&mut self, arg: &str) -> web_view::WVResult {
-        use InCmd::*;
-
-        match serde_json::from_str(arg).unwrap() {
-            Callback {
-                descriptor,
-                args,
-            } => {
-                if let Some(f) = self.callback(descriptor) {
-                    let s = self.clone();
-                    f(&s, args);
-                }
-            },
-
-            ExistenceTest {
-                request,
-                found,
-            } => {
-                self.respond(request, ResponseValue::Bool(found));
-            },
-
-            Attribute {
-                request,
-                value,
-            } => {
-                self.respond(request, ResponseValue::Str(value));
-            },
-        }
-
-        Ok(())
-    }
-
-    /// Run given JS code.
-    pub fn eval(&self, js: &str) {
-        self.i.write().unwrap().view.eval(js).unwrap();
-    }
-
-    fn new_request(&self) -> RequestBuilder {
-        let id = {
-            let mut write = self.i.write().unwrap();
-            let id = write.next_request_id;
-            write.next_request_id += 1;
-            id
-        };
-
-        RequestBuilder::new(self.clone(), id)
-    }
-
-    /// Remove previously registered request by id if any. Function returns a sender
-    /// that was to be used to wake up the waiting function.
-    fn remove_request(&mut self, id: RequestId) -> Option<mpsc::Sender<ResponseValue>> {
-        let mut i = self.i.write().unwrap();
-        i.requests.remove(&id)
-    }
-
-    /// Save request response. Remove request from waiting list and wake up the waiter.
-    fn respond(&mut self, id: RequestId, val: ResponseValue) {
-        let mut i = self.i.write().unwrap();
-        if let Some(r) = i.requests.remove(&id) {
-            let _result = r.send(val);
-        }
-    }
-
-    /// Get access to root component Arc.
-    pub fn root_component(&mut self) -> ComponentHandle {
-        ComponentHandle::new(self.clone(), ROOT_COMPONENT_ID)
-    }
-
-    /// Run execution loop until WebView exits. This function creates parallel thread that
-    /// dispatches all events.
-    pub fn run(&self) {
-        let interface = self.clone();
-        loop {
-            // TODO safer code.
-            let result = {
-                // Use ptr to drop the write lock as it otherwise interferes with locks
-                // created in callbacks.
-                let ptr = {
-                    let view = &mut interface.i.write().unwrap().view;
-                    view as *mut WebView
-                };
-                let wv = unsafe { &mut *ptr };
-                wv.step()
-            };
-            match result {
-                Some(Ok(_)) => (),
-                Some(_) => break,
-                None => break,
-            }
-        }
-    }
-
-    /// Add new component to the interface and get a handle to it.
-    fn add_component(&mut self, component: Box<dyn Component>) -> ComponentHandle {
-        let id = {
-            let mut this = self.i.write().unwrap();
-
-            let id = this.next_component_id;
-            this.next_component_id += 1;
-
-            this.components.insert(id, Arc::new(RwLock::new(component)));
-            id
-        };
-
-        ComponentHandle::new(self.clone(), id)
-    }
-
-    /// Try removing component from the interface. If it does not exist None is returned.
-    /// Also, it may still be in use though it will still be removed from the interface
-    /// and all new changes to the component will be therefore ignored.
-    fn remove_component(&mut self, handle: &ComponentHandle) -> Option<()> {
-        let mut this = self.i.write().unwrap();
-        let option = this.components.remove(&handle.id());
-        if let Some(_) = option {
-            Some(())
-        } else {
-            None
-        }
-    }
-
-    /// Inject styles to the view.
-    pub fn inject_css(&mut self, css: &str) {
-        self.i.write().unwrap().view.inject_css(css).unwrap();
-    }
 }
 
 unsafe impl Send for Interface {}
@@ -434,10 +473,10 @@ impl PartialEq for Interface {
 
 impl RequestBuilder {
 
-    fn new(interface: Interface, id: RequestId) -> Self {
+    fn new(view: ViewHandle, id: RequestId) -> Self {
         let (tx, rx) = mpsc::channel();
         RequestBuilder {
-            interface,
+            view,
             id,
             tx,
             rx,
@@ -457,25 +496,18 @@ impl RequestBuilder {
 
     /// Evaluate the request.
     pub fn eval(self) -> mpsc::Receiver<ResponseValue> {
-        let mut interface = self.interface;
         let js = self.js.unwrap();
         let id = self.id;
+        let mut lock = self.view.write().unwrap();
 
         let err = {
-            // Save the sender to the interface so callback could send the value to listener.
-            let view = {
-                let mut i = interface.i.write().unwrap();
-                i.requests.insert(self.id, self.tx);
-
-                // Drop the lock so handler in this thread would be allowed to lock it again.
-                let view = &mut i.view as *mut WebView;
-                unsafe { &mut *view } // TODO safe code
-            };
-            view.eval(&js).is_err()
+            // Save the sender to the view so callback could send the value to listener.
+            lock.requests.insert(id, self.tx);
+            lock.eval_wait(js).is_err()
         };
         if err {
             // Evaluation failed so response will never arrive. Delete the entry.
-            interface.remove_request(id);
+            lock.remove_request(id);
         }
 
         self.rx
@@ -497,8 +529,12 @@ impl Element for RootComponent {
         self.base.id()
     }
 
-    fn interface(&self) -> &Interface {
-        self.base.interface()
+    fn view(&self) -> RwLockReadGuardRef<View> {
+        self.base.view()
+    }
+
+    fn view_mut(&mut self) -> RwLockWriteGuardRefMut<View> {
+        self.base.view_mut()
     }
 }
 
@@ -518,7 +554,7 @@ impl Container for RootComponent {
         if let Err(e) = result {
             return Err(e);
         }
-        self.interface().eval(&js);
+        self.view_mut().eval(js);
         Ok(result.unwrap())
     }
 
@@ -529,7 +565,7 @@ impl Container for RootComponent {
                 var i = document.getElementById('{}');
                 i.outerHTML = '';
             ", component.read().as_owner().name());
-            self.interface().eval(&js);
+            self.view_mut().eval(js);
             Some(())
         } else {
             None

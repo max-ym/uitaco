@@ -72,7 +72,7 @@ impl<E> Event for OnClick<E>
 
     fn callback(&self) -> Option<Box<&Callback>> {
         if let Some(id) = self.callback_id {
-            Some(self.elem.interface().callback(id).unwrap())
+            Some(self.elem.view().callback(id).unwrap())
         } else {
             None
         }
@@ -83,7 +83,7 @@ impl<E> Event for OnClick<E>
             self.remove_callback();
         }
 
-        let id = self.elem.interface_mut().add_callback(callback);
+        let id = self.elem.view_mut().add_callback(callback);
         self.elem.set_attribute("onclick", &default_callback_fn(id));
 
         self.callback_id = Some(id);
@@ -95,7 +95,7 @@ impl<E> Event for OnClick<E>
         }
 
         self.elem.set_attribute("onclick", "");
-        Some(self.elem.interface_mut().remove_callback(self.callback_id.unwrap()))
+        Some(self.elem.view_mut().remove_callback(self.callback_id.unwrap()))
     }
 
     fn is_set(&self) -> bool {

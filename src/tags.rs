@@ -1,4 +1,4 @@
-use crate::{Interface, ResponseValue};
+use crate::{ResponseValue, ViewHandle, View};
 use std::fmt::Debug;
 use htmldom_read::{Node};
 use crate::events::OnClick;
@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::fmt::Formatter;
 use std::sync::Arc;
+use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 
 /// The functions that allow to load images concurrently.
 pub mod image_loader {
@@ -84,7 +85,7 @@ pub trait Element: Debug {
 
     /// HTML content of this element if it still exists.
     fn dom_html(&mut self) -> Option<String> {
-        let req = self.interface_mut().new_request();
+        let req = self.view_mut().new_request();
         let js = format!("\
             var inner = document.getElementById('{}').outerHTML;\
             window.external.invoke(JSON.stringify({{\
@@ -115,7 +116,11 @@ pub trait Element: Debug {
     /// Get attribute value of the element if any. Even if attribute is present but is empty
     /// None is returned.
     fn attribute(&self, name: &str) -> Option<String> {
-        let request = self.interface().new_request();
+        // Unsafe because we take immutable variable `self` as mutable.
+        let request = unsafe {
+            let this = &mut *(self as *const Self as *mut Self);
+            this.view_mut().new_request()
+        };
         let id = request.id();
 
         let js = format!("\
@@ -143,30 +148,33 @@ pub trait Element: Debug {
 
     /// Set attribute with given name to given value.
     fn set_attribute(&mut self, name: &str, value: &str) {
-        self.interface().eval(
-            &format!(
+        let id = self.id().to_owned();
+        self.view_mut().eval(
+            format!(
                 "document.getElementById('{}').setAttribute('{}', '{}');",
-                self.id(), name, crate::js_prefix_quotes(value)
+                id, name, crate::js_prefix_quotes(value)
             )
         );
     }
 
     /// Append given text to innerHTML field.
     fn append_inner_html(&mut self, html: &str) {
-        self.interface().eval(
-            &format!(
+        let id = self.id().to_owned();
+        self.view_mut().eval(
+            format!(
                 "document.getElementById('{}').innerHTML += '{}';",
-                self.id(), crate::js_prefix_quotes(html)
+                id, crate::js_prefix_quotes(html)
             )
         );
     }
 
     /// Clears the outerHTML of the element to remove it from HTML completely.
     fn remove_from_html(&mut self) {
-        self.interface().eval(
-            &format!(
+        let id = self.id().to_owned();
+        self.view_mut().eval(
+            format!(
                 "document.getElementById('{}').outerHTML = '';",
-                self.id()
+                id
             )
         );
     }
@@ -179,12 +187,9 @@ pub trait Element: Debug {
         self.set_attribute("id", new_id)
     }
 
-    fn interface(&self) -> &Interface;
+    fn view(&self) -> RwLockReadGuardRef<View>;
 
-    fn interface_mut(&mut self) -> &mut Interface {
-        let ptr = self.interface() as *const Interface as *mut Interface;
-        unsafe { &mut *(ptr) }
-    }
+    fn view_mut(&mut self) -> RwLockWriteGuardRefMut<View>;
 
     /// Check whether this element still exists.
     /// Actions on non-existing elements have no effect.
@@ -274,8 +279,12 @@ macro_rules! elm_impl {
     ($name: ident) => {
         impl Element for $name {
 
-            fn interface(&self) -> &Interface {
-                &self.interface
+            fn view(&self) -> RwLockReadGuardRef<View> {
+                RwLockReadGuardRef::new(self.view.read().unwrap())
+            }
+
+            fn view_mut(&mut self) -> RwLockWriteGuardRefMut<View> {
+                RwLockWriteGuardRefMut::new(self.view.write().unwrap())
             }
 
             fn id(&self) -> &String {
@@ -305,7 +314,7 @@ pub struct Image {
 
 #[derive(Debug)]
 pub struct A {
-    interface: Interface,
+    view: ViewHandle,
     id: String,
 
     onclick: OnClick<A>,
@@ -313,25 +322,25 @@ pub struct A {
 
 #[derive(Debug)]
 pub struct Canvas {
-    interface: Interface,
+    view: ViewHandle,
     id: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct H4 {
-    interface: Interface,
+    view: ViewHandle,
     id: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct H5 {
-    interface: Interface,
+    view: ViewHandle,
     id: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct Img {
-    interface: Interface,
+    view: ViewHandle,
     id: String,
 
     data: Option<Arc<Image>>,
@@ -339,19 +348,19 @@ pub struct Img {
 
 #[derive(Clone, Debug)]
 pub struct Li {
-    interface: Interface,
+    view: ViewHandle,
     id: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct P {
-    interface: Interface,
+    view: ViewHandle,
     id: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct Span {
-    interface: Interface,
+    view: ViewHandle,
     id: String,
 }
 
@@ -366,7 +375,7 @@ elm_impl!(Span);
 
 #[derive(Clone, Debug)]
 pub struct Unknown {
-    interface: Interface,
+    view: ViewHandle,
     id: String,
     name: String,
 }
@@ -440,11 +449,11 @@ impl From<&str> for TagName {
 impl TagName {
 
     /// Create implementation of the tag by it's tag name.
-    pub fn new_impl(&self, interface: Interface, id: String) -> Box<dyn Element> {
+    pub fn new_impl(&self, view: ViewHandle, id: String) -> Box<dyn Element> {
         match self {
             TagName::A => {
                 let mut b = Box::new(A {
-                    interface,
+                    view,
                     id,
                     onclick: unsafe { OnClick::null() },
                 });
@@ -455,28 +464,28 @@ impl TagName {
 
             TagName::Canvas => {
                 Box::new(Canvas {
-                    interface,
+                    view,
                     id,
                 })
             },
 
             TagName::H4 => Box::new(
                 H4 {
-                    interface,
+                    view,
                     id,
                 }
             ),
 
             TagName::H5 => Box::new(
                 H4 {
-                    interface,
+                    view,
                     id,
                 }
             ),
 
             TagName::Img => Box::new(
                 Img {
-                    interface,
+                    view,
                     id,
                     data: None,
                 }
@@ -484,16 +493,16 @@ impl TagName {
 
             TagName::Li => Box::new (
                 Li {
-                    interface,
+                    view,
                     id,
                 }
             ),
 
-            TagName::P          => Box::new(P           { interface, id }),
-            TagName::Span       => Box::new(Span        { interface, id }),
+            TagName::P          => Box::new(P           { view, id }),
+            TagName::Span       => Box::new(Span        { view, id }),
 
             TagName::Unknown(name) => Box::new(Unknown {
-                interface,
+                view,
                 id,
                 name: name.clone(),
             }),
@@ -517,12 +526,12 @@ impl TagName {
     /// Node must contain ID of the element. It also is required to contain opening tag
     /// which corresponds to element tag. If either of conditions is not met this function
     /// will return None.
-    pub fn try_impl_from_node(node: &Node, interface: Interface) -> Option<Box<dyn Element>> {
+    pub fn try_impl_from_node(node: &Node, view: ViewHandle) -> Option<Box<dyn Element>> {
         let tag_name = Self::try_from_node(node);
         if let Some(tag_name) = tag_name {
             let id = node.attribute_by_name("id");
             if let Some(id) = id {
-                Some(tag_name.new_impl(interface, id.values_to_string()))
+                Some(tag_name.new_impl(view, id.values_to_string()))
             } else {
                 None
             }
@@ -627,7 +636,11 @@ impl Element for Unknown {
         &self.id
     }
 
-    fn interface(&self) -> &Interface {
-        &self.interface
+    fn view(&self) -> RwLockReadGuardRef<View> {
+        RwLockReadGuardRef::new(self.view.read().unwrap())
+    }
+
+    fn view_mut(&mut self) -> RwLockWriteGuardRefMut<View> {
+        RwLockWriteGuardRefMut::new(self.view.write().unwrap())
     }
 }
