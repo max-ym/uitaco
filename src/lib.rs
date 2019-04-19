@@ -103,27 +103,12 @@ unsafe impl Send for View {}
 
 #[derive(Clone, Debug)]
 pub struct ViewBuilder {
-    interface: Interface,
-
     debug: bool,
     fullscreen: bool,
     resizable: bool,
     width: usize,
     height: usize,
     title: Option<String>,
-}
-
-/// Interface for `WebView` and `Uitaco`.
-#[derive(Debug)]
-struct InterfaceInner {
-    views: HashMap<ViewId, ViewHandle>,
-}
-
-/// Handle to the Interface to allow to access it from different threads.
-/// Can be safely cloned to be shared - it will still point to the same interface.
-#[derive(Clone, Debug)]
-pub struct Interface {
-    i: Arc<RwLock<InterfaceInner>>,
 }
 
 #[derive(Debug)]
@@ -190,10 +175,8 @@ impl Debug for View {
 impl View {
 
     /// Get new builder to help creating view.
-    pub fn new_builder(interface: Interface) -> ViewBuilder {
+    pub fn new_builder() -> ViewBuilder {
         ViewBuilder {
-            interface,
-
             debug: true,
             fullscreen: false,
             resizable: true,
@@ -454,20 +437,6 @@ impl ViewBuilder {
 
     pub fn build(self) -> ViewHandle {
         View::new_from_builder(self)
-    }
-}
-
-impl Interface {
-
-}
-
-unsafe impl Send for Interface {}
-unsafe impl Sync for Interface {}
-
-impl PartialEq for Interface {
-
-    fn eq(&self, other: &Interface) -> bool {
-        Arc::ptr_eq(&self.i, &other.i)
     }
 }
 
