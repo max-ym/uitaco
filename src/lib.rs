@@ -6,6 +6,7 @@
 #[macro_use]
 extern crate typed_html;
 extern crate web_view;
+extern crate webview_sys;
 extern crate serde_derive;
 extern crate serde_json;
 pub extern crate htmldom_read;
@@ -79,6 +80,7 @@ enum ViewCmd {
     /// Evaluate given JS code.
     Eval(Option<mpsc::Sender<WVResult>>, String),
     InjectCss(String),
+    Exit,
 }
 
 /// Wrapped instance of WebView. Also is connected to thread that runs GUI on that instance.
@@ -260,6 +262,7 @@ impl View {
         let arc2 = arc.clone();
 
         // Thread where WebView will live.
+        let wrap2 = wrap.clone();
         thread::spawn(move || {
             let mut webview = my_builder
                 .invoke_handler(move |_view, arg| {
@@ -268,6 +271,25 @@ impl View {
                 })
                 .user_data(UserData::new())
                 .build().unwrap();
+
+            // UI loop thread.
+            let ptr: usize = unsafe { std::mem::transmute_copy(&webview) };
+            thread::spawn(move || {
+                loop {
+                    let ptr = ptr as *mut webview_sys::CWebView;
+                    {
+                        let lock = wrap2.inner.write().unwrap();
+                        let status = unsafe {
+                            webview_sys::webview_loop(ptr, 0)
+                        };
+                        if status != 0 {
+                            // Exit
+                            lock.tx.send(ViewCmd::Exit).unwrap();
+                            break;
+                        }
+                    }
+                }
+            });
 
             loop {
                 let result = rx.recv();
@@ -288,7 +310,8 @@ impl View {
                         if let Err(_) = result {
                             // Nothing.
                         }
-                    }
+                    },
+                    Exit => break,
                 }
             }
         });
