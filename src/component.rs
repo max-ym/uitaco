@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, LinkedList};
 use crate::tags::{Element, TagName};
-use crate::{ViewHandle, View};
+use crate::{ViewHandle, View, ViewGuard, ViewGuardMut};
 use std::sync::{Arc, RwLock};
 use std::fmt::Debug;
 use htmldom_read::{Node, NodeAccess, Attribute, Children};
@@ -727,6 +727,14 @@ impl ComponentBase {
     /// All accessible elements of this component.
     pub fn elements_mut(&mut self) -> &mut HashMap<String, Box<dyn Element>> {
         &mut self.elements
+    }
+
+    pub fn view(&self) -> ViewGuard {
+        RwLockReadGuardRef::new(self.view.read().unwrap())
+    }
+
+    pub fn view_mut(&mut self) -> ViewGuardMut {
+        RwLockWriteGuardRefMut::new(self.view.write().unwrap())
     }
 }
 

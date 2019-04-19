@@ -25,7 +25,7 @@ use typed_html::dom::DOMTree;
 use crate::tags::{Element, TagName};
 use htmldom_read::Node;
 use std::fmt::{Debug, Formatter};
-use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
+pub use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use std::thread;
 
 /// Components allow to build user interface using repeated patterns with binding to elements.
@@ -68,8 +68,10 @@ type Callback = Fn(ViewHandle, String);
 type RequestId = usize;
 type CallbackId = usize;
 type ViewId = usize;
-type ViewHandle = Arc<RwLock<View>>;
-type ViewWeak = Weak<RwLock<View>>;
+pub type ViewHandle = Arc<RwLock<View>>;
+pub type ViewWeak = Weak<RwLock<View>>;
+pub type ViewGuard<'a> = RwLockReadGuardRef<'a, View>;
+pub type ViewGuardMut<'a> = RwLockWriteGuardRefMut<'a, View>;
 
 /// Command that can be sent to View.
 enum ViewCmd {
@@ -96,6 +98,11 @@ pub struct View {
 
     next_request_id: RequestId,
     requests: HashMap<RequestId, mpsc::Sender<ResponseValue>>,
+}
+
+/// Wrap over view handle to make access easier.
+pub struct ViewWrap {
+    inner: ViewHandle,
 }
 
 unsafe impl Sync for View {}
@@ -187,7 +194,7 @@ impl View {
     }
 
     /// Create new view. This opens a WebView window.
-    pub fn new_from_builder(builder: ViewBuilder) -> ViewHandle {
+    pub fn new_from_builder(builder: ViewBuilder) -> ViewWrap {
         let mut my_builder = web_view::builder();
         my_builder.debug = builder.debug;
         my_builder.resizable = builder.resizable;
@@ -268,7 +275,7 @@ impl View {
             }
         });
 
-        arc
+        ViewWrap { inner: arc }
     }
 
     /// Get new handle on this view.
@@ -407,6 +414,47 @@ impl View {
     }
 }
 
+impl ViewWrap {
+
+    pub fn new_builder() -> ViewBuilder {
+        View::new_builder()
+    }
+
+    pub fn new_from_builder(builder: ViewBuilder) -> ViewWrap {
+        View::new_from_builder(builder)
+    }
+
+    /// Get new handle on this view.
+    pub fn handle(&self) -> ViewHandle {
+        let view = self.inner.read().unwrap();
+        view.handle()
+    }
+
+    /// Get access to root component Arc.
+    pub fn root_component(&mut self) -> ComponentHandle {
+        let mut view = self.inner.write().unwrap();
+        view.root_component()
+    }
+
+    /// Inject styles to the view.
+    pub fn inject_css(&mut self, css: String) {
+        let mut view = self.inner.write().unwrap();
+        view.inject_css(css)
+    }
+
+    /// Run given JS code and wait for result.
+    pub fn eval_wait(&mut self, js: String) -> WVResult {
+        let mut view = self.inner.write().unwrap();
+        view.eval_wait(js)
+    }
+
+    /// Run given JS code without waiting for result.
+    pub fn eval(&mut self, js: String) {
+        let mut view = self.inner.write().unwrap();
+        view.eval(js)
+    }
+}
+
 impl ViewBuilder {
 
     pub fn debug(mut self, debug: bool) -> Self {
@@ -435,7 +483,7 @@ impl ViewBuilder {
         self
     }
 
-    pub fn build(self) -> ViewHandle {
+    pub fn build(self) -> ViewWrap {
         View::new_from_builder(self)
     }
 }

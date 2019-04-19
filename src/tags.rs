@@ -1,4 +1,4 @@
-use crate::{ResponseValue, ViewHandle, View};
+use crate::{ResponseValue, ViewHandle, View, ViewGuard, ViewGuardMut};
 use std::fmt::Debug;
 use htmldom_read::{Node};
 use crate::events::OnClick;
@@ -187,9 +187,9 @@ pub trait Element: Debug {
         self.set_attribute("id", new_id)
     }
 
-    fn view(&self) -> RwLockReadGuardRef<View>;
+    fn view(&self) -> ViewGuard;
 
-    fn view_mut(&mut self) -> RwLockWriteGuardRefMut<View>;
+    fn view_mut(&mut self) -> ViewGuardMut;
 
     /// Check whether this element still exists.
     /// Actions on non-existing elements have no effect.
