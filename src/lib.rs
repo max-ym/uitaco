@@ -19,7 +19,7 @@ pub use uitaco_derive::*;
 
 use serde_derive::{Deserialize};
 use web_view::{Content, WVResult};
-use std::sync::{Arc, RwLock, mpsc, Weak};
+use std::sync::{Arc, RwLock, mpsc, Weak, Mutex};
 use std::collections::{HashMap, HashSet};
 use crate::component::{ComponentBase, ComponentHandle, ComponentId, Component, Container, AddComponentError, ChildrenLogic, ChildrenLogicAddError, ClassHandle, Class};
 use typed_html::dom::DOMTree;
@@ -28,6 +28,7 @@ use htmldom_read::Node;
 use std::fmt::{Debug, Formatter};
 pub use owning_ref::{RwLockReadGuardRef, RwLockWriteGuardRefMut};
 use std::thread;
+use std::thread::JoinHandle;
 
 /// Components allow to build user interface using repeated patterns with binding to elements.
 /// This allows to speed up building of UI. Binding allows to easily access contents from Rust.
@@ -64,18 +65,38 @@ pub fn js_prefix_quotes(s: &str) -> String {
 const ROOT_COMPONENT_ID: ComponentId = 0;
 
 type UserData = Vec<(String, String)>;
-//type WebView<'a> = _WebView<'a, UserData>;
+type WebView<'a> = web_view::WebView<'a, UserData>;
 type Callback = Fn(ViewWrap, String);
 type RequestId = usize;
 type CallbackId = usize;
 type ViewId = usize;
-pub type ViewHandle = Arc<RwLock<View>>;
-pub type ViewWeak = Weak<RwLock<View>>;
+pub type ViewHandle = Arc<ViewTuple>;
+pub type ViewWeak = Weak<ViewTuple>;
 pub type ViewGuard<'a> = RwLockReadGuardRef<'a, View>;
 pub type ViewGuardMut<'a> = RwLockWriteGuardRefMut<'a, View>;
 
+/// Main structs that are used to control WebView backend, Uitaco structs and send commands
+/// between Uitaco and WebView.
+#[derive(Debug)]
+pub struct ViewTuple {
+    view: RwLock<View>,
+    sender: Mutex<mpsc::Sender<ViewCmd>>,
+}
+
+/// Used with RwLock. Marker. Whether WebView is accessed in read or write modes.
+#[derive(Debug, Clone)]
+pub struct WebViewAccess;
+
+/// Thread-send impl for WebView
+struct WebViewSend {
+    wv: WebView<'static>
+}
+unsafe impl Send for WebViewSend {}
+unsafe impl Sync for WebViewSend {}
+
 /// Command that can be sent to View.
-enum ViewCmd {
+#[derive(Debug)]
+pub enum ViewCmd {
 
     /// Evaluate given JS code.
     Eval(Option<mpsc::Sender<WVResult>>, String),
@@ -87,7 +108,6 @@ enum ViewCmd {
 /// Is used to dispatch commands over GUI.
 pub struct View {
     id: ViewId,
-    tx: mpsc::Sender<ViewCmd>,
 
     // After initialization is always set to Some.
     this: Option<ViewWeak>,
@@ -100,6 +120,8 @@ pub struct View {
 
     next_request_id: RequestId,
     requests: HashMap<RequestId, mpsc::Sender<ResponseValue>>,
+
+    thread: Option<JoinHandle<()>>,
 }
 
 /// Wrap over view handle to make access easier.
@@ -135,13 +157,20 @@ pub struct RootComponent {
     base: ComponentBase,
 }
 
+impl Clone for WebViewSend {
+
+    fn clone(&self) -> Self {
+        let wv: WebView = unsafe { std::mem::transmute_copy(&self.wv) };
+        WebViewSend { wv }
+    }
+}
+
 impl Debug for View {
 
     fn fmt(&self, fmt: &mut Formatter) -> std::fmt::Result {
         #[derive(Debug)]
         struct DebuggableView<'a> {
             id: ViewId,
-            tx: &'a mpsc::Sender<ViewCmd>,
 
             next_component_id: ComponentId,
             components: &'a HashMap<ComponentId, Arc<RwLock<Box<dyn Component>>>>,
@@ -166,7 +195,6 @@ impl Debug for View {
 
         let s = DebuggableView {
             id: self.id,
-            tx: &self.tx,
 
             next_component_id: self.next_component_id,
             components: &self.components,
@@ -223,7 +251,6 @@ impl View {
         let (tx, rx) = mpsc::channel();
         let view = View {
             id: 0,
-            tx,
 
             this: None,
 
@@ -235,18 +262,25 @@ impl View {
 
             next_callback_id: 0,
             callbacks: Default::default(),
+
+            thread: None,
+        };
+        let tuple = ViewTuple {
+            view: RwLock::new(view),
+            sender: Mutex::new(tx),
         };
 
         // Create arcs for wrap and access from new webview thread.
-        let arc = Arc::new(RwLock::new(view));
-        let arc2 = arc.clone();
+        let tuple = Arc::new(tuple);
 
         { // Save self-pointer.
-            let mut view = arc2.write().unwrap();
-            view.this = Some(Arc::downgrade(&arc));
+            let mut view = tuple.view.write().unwrap();
+            view.this = Some(Arc::downgrade(&tuple));
         }
 
-        let wrap = ViewWrap { inner: arc.clone() };
+        let wrap = ViewWrap {
+            inner: tuple.clone(),
+        };
 
         // Create and add root component.
         let mut classes = Class::all_from_html(&content);
@@ -256,69 +290,90 @@ impl View {
         let body_component = body_builder.build(wrap.clone());
         let root_component = RootComponent { base: body_component };
         {
-            let mut guard = wrap.inner.write().unwrap();
+            let mut guard = wrap.inner.view.write().unwrap();
             let data = RwLock::new(Box::new(root_component) as _);
             guard.components.insert(ROOT_COMPONENT_ID, Arc::new(data));
             guard.next_component_id += 1;
         }
 
-        let arc2 = arc.clone();
-
         // Thread where WebView will live.
-        let wrap2 = wrap.clone();
-        thread::spawn(move || {
-            let mut webview = my_builder
-                .invoke_handler(move |_view, arg| {
-                    let mut view = arc2.write().unwrap();
+        let arc2 = tuple.clone();
+        let thread = thread::spawn(move || {
+            let webview = my_builder
+                .invoke_handler(move |_, arg| {
+                    let mut view = arc2.view.write().unwrap();
                     view.handler(arg)
                 })
                 .user_data(UserData::new())
                 .build().unwrap();
 
-            // UI loop thread.
-            let ptr: usize = unsafe { std::mem::transmute_copy(&webview) };
+            let transfer = WebViewSend { wv: webview };
+            let arc = Arc::new(RwLock::new(transfer));
+            let arc2 = arc.clone();
+
+            // Thread to process cmds and dispatch them.
             thread::spawn(move || {
                 loop {
-                    let ptr = ptr as *mut webview_sys::CWebView;
-                    {
-                        let lock = wrap2.inner.write().unwrap();
-                        let status = unsafe {
-                            webview_sys::webview_loop(ptr, 0)
+                    let result = rx.recv();
+                    if let Err(_) = result {
+                        // Nothing.
+                    } else if let Ok(cmd) = result {
+                        let handle = {
+                            arc.read().unwrap().wv.handle()
                         };
-                        if status != 0 {
-                            // Exit
-                            lock.tx.send(ViewCmd::Exit).unwrap();
-                            break;
+                        use ViewCmd::*;
+                        match cmd {
+                            Eval(sender, st) => {
+                                let arc = arc.clone();
+                                handle.dispatch(move |_| {
+                                    let mut lock
+                                        = arc.write().unwrap();
+                                    let wv = &mut lock.wv;
+
+                                    let result = wv.eval(&st);
+                                    if let Some(sender) = sender {
+                                        sender.send(result).unwrap();
+                                    }
+
+                                    Ok(())
+                                }).unwrap();
+                            },
+                            InjectCss(st) => {
+                                let arc = arc.clone();
+                                handle.dispatch(move |_| {
+                                    let mut lock = arc.write().unwrap();
+                                    let wv = &mut lock.wv;
+                                    let result = wv.inject_css(&st);
+                                    if result.is_err() {
+                                        // Nothing.
+                                    }
+
+                                    Ok(())
+                                }).unwrap();
+                            },
+                            Exit => break, // TODO
                         }
                     }
                 }
             });
 
+            // Unleash rwlock because closures are blocking it too. Still it is safe
+            // to use lock as closures will access it only after `step` fn calls them.
+            // Which already will make all the changes needed and will not need access to lock
+            // by the time closures are run.
+            let wv = unsafe {
+                let mut lock = arc2.write().unwrap();
+                &mut *(&mut *lock as *mut WebViewSend)
+            };
             loop {
-                let result = rx.recv();
-                if let Err(_) = result {
-                    break; // TODO notify any who waits for this death.
-                }
-
-                use ViewCmd::*;
-                match result.unwrap() {
-                    Eval(ref sender, ref st) => {
-                        let result = webview.eval(st);
-                        if let Some(sender) = sender {
-                            sender.send(result).unwrap();
-                        }
-                    },
-                    InjectCss(ref st) => {
-                        let result = webview.inject_css(st);
-                        if let Err(_) = result {
-                            // Nothing.
-                        }
-                    },
-                    Exit => break,
+                match wv.wv.step() {
+                    Some(_) => (),
+                    None => break,
                 }
             }
         });
 
+        wrap.inner.view.write().unwrap().thread = Some(thread);
         wrap
     }
 
@@ -356,24 +411,6 @@ impl View {
         } else {
             None
         }
-    }
-
-    /// Inject styles to the view.
-    pub fn inject_css(&mut self, css: String) {
-        self.tx.send(ViewCmd::InjectCss(css)).unwrap();
-    }
-
-    /// Run given JS code and wait for result.
-    pub fn eval_wait(&mut self, js: String) -> WVResult {
-        let (tx, rx) = mpsc::channel();
-        self.tx.send(ViewCmd::Eval(Some(tx), js)).unwrap();
-        let recv = rx.recv().unwrap();
-        recv
-    }
-
-    /// Run given JS code without waiting for result.
-    pub fn eval(&mut self, js: String) {
-        self.tx.send(ViewCmd::Eval(None, js)).unwrap();
     }
 
     fn new_request(&mut self) -> RequestBuilder {
@@ -457,12 +494,24 @@ impl View {
             // TODO use result
         }
     }
+
+    /// Wait until this view finishes it's execution.
+    pub fn wait_to_finish(&mut self) -> JoinHandle<()> {
+        let mut thread = None;
+        std::mem::swap(&mut thread, &mut self.thread);
+        thread.unwrap()
+    }
 }
 
 impl ViewWrap {
 
     pub fn inner(&self) -> &ViewHandle {
         &self.inner
+    }
+
+    /// Get access to sender of web view commands.
+    pub fn webview_cmd(&self) -> &Mutex<mpsc::Sender<ViewCmd>> {
+        &self.inner.sender
     }
 
     pub fn new_builder() -> ViewBuilder {
@@ -475,37 +524,19 @@ impl ViewWrap {
 
     /// Get new handle on this view.
     pub fn handle(&self) -> ViewWrap {
-        let view = self.inner.read().unwrap();
+        let view = self.inner.view.read().unwrap();
         view.handle()
     }
 
     /// Get access to root component Arc.
     pub fn root_component(&self) -> ComponentHandle {
-        let view = self.inner.read().unwrap();
+        let view = self.inner.view.read().unwrap();
         view.root_component()
-    }
-
-    /// Inject styles to the view.
-    pub fn inject_css(&mut self, css: String) {
-        let mut view = self.inner.write().unwrap();
-        view.inject_css(css)
-    }
-
-    /// Run given JS code and wait for result.
-    pub fn eval_wait(&mut self, js: String) -> WVResult {
-        let mut view = self.inner.write().unwrap();
-        view.eval_wait(js)
-    }
-
-    /// Run given JS code without waiting for result.
-    pub fn eval(&mut self, js: String) {
-        let mut view = self.inner.write().unwrap();
-        view.eval(js)
     }
 
     /// Add new callback. Get descriptor of newly registered callback.
     fn add_callback(&mut self, f: Box<&'static Callback>) -> CallbackId {
-        let mut view = self.inner.write().unwrap();
+        let mut view = self.inner.view.write().unwrap();
         view.add_callback(f)
     }
 
@@ -514,19 +545,48 @@ impl ViewWrap {
     /// # Panics
     /// This function will panic if callback is not present.
     fn remove_callback<'a, 'b>(&'a mut self, id: CallbackId) -> &'b Callback {
-        let mut view = self.inner.write().unwrap();
+        let mut view = self.inner.view.write().unwrap();
         view.remove_callback(id)
     }
 
     /// Find callback with given id.
     fn callback<'a, 'b>(&'a self, id: CallbackId) -> Option<Box<&'b Callback>> {
-        let view = self.inner.read().unwrap();
+        let view = self.inner.view.read().unwrap();
         view.callback(id)
     }
 
     fn new_request(&mut self) -> RequestBuilder {
-        let mut view = self.inner.write().unwrap();
+        let mut view = self.inner.view.write().unwrap();
         view.new_request()
+    }
+
+    /// Inject styles to the view.
+    pub fn inject_css(&self, css: String) {
+        self.inner.sender.lock().unwrap().send(ViewCmd::InjectCss(css)).unwrap();
+    }
+
+    /// Run given JS code and wait for result.
+    pub fn eval_wait(&self, js: String) -> WVResult {
+        let (tx, rx) = mpsc::channel();
+        self.inner.sender.lock().unwrap().send(ViewCmd::Eval(Some(tx), js)).unwrap();
+        let recv = rx.recv().unwrap();
+        recv
+    }
+
+    /// Run given JS code without waiting for result.
+    pub fn eval(&self, js: String) {
+        self.inner.sender.lock().unwrap().send(ViewCmd::Eval(None, js)).unwrap();
+    }
+
+    pub fn wait_to_finish(&self) {
+        // Do not hold the lock just to wait view to finish as something else may need to
+        // acquire the lock until then.
+        let join = unsafe {
+            let mut lock = self.inner.view.write().unwrap();
+            let view = &mut *(&mut *lock as *mut View);
+            view.wait_to_finish()
+        };
+        join.join().unwrap();
     }
 }
 
@@ -590,16 +650,22 @@ impl RequestBuilder {
     pub fn eval(self) -> mpsc::Receiver<ResponseValue> {
         let js = self.js.unwrap();
         let id = self.id;
-        let mut lock = self.view.inner().write().unwrap();
+        let view_wrap = self.view;
 
-        let err = {
+        // Insert request callback.
+        {
+            let mut view = view_wrap.inner().view.write().unwrap();
             // Save the sender to the view so callback could send the value to listener.
-            lock.requests.insert(id, self.tx);
-            lock.eval_wait(js).is_err()
+            view.requests.insert(id, self.tx);
+        }
+        let err = {
+            // Must be called with unlocked View because it locks the View.
+            view_wrap.eval_wait(js).is_err()
         };
         if err {
             // Evaluation failed so response will never arrive. Delete the entry.
-            lock.remove_request(id);
+            let mut view = view_wrap.inner().view.write().unwrap();
+            view.remove_request(id);
         }
 
         self.rx

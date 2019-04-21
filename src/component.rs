@@ -634,7 +634,7 @@ impl Container for ComponentBase {
 
     fn add_component(&mut self, component: Box<dyn Component>)
             -> Result<ComponentHandle, AddComponentError> {
-        let mut guard = self.view.inner.write().unwrap();
+        let mut guard = self.view.inner.view.write().unwrap();
         let handle = guard.add_component(component);
         self.components.insert(handle.clone());
         Ok(handle)
@@ -643,7 +643,7 @@ impl Container for ComponentBase {
     fn remove_component(&mut self, component: &ComponentHandle) -> Option<()> {
         let found = self.components.remove(&component);
         if found {
-            let mut guard = self.view.inner.write().unwrap();
+            let mut guard = self.view.inner.view.write().unwrap();
             guard.remove_component(component);
             Some(())
         } else {
@@ -741,7 +741,7 @@ impl ComponentHandle {
     /// Create new component handle for given component (by id) in the interface.
     pub fn new(view: ViewWrap, id: ComponentId) -> Self {
         let lock = {
-            let guard = view.inner.read().unwrap();
+            let guard = view.inner.view.read().unwrap();
             guard.components.get(&id).unwrap()
                 .clone()
         };
